@@ -26,7 +26,7 @@ framework, rendering engine, storage engine, or internal architecture.
 This document defines:
 
 - the JSON data model and JSON-RPC 2.0 conventions used by EBP;
-- the `android-loopback-tcp` transport profile and its framing;
+- the Section 5 transport profiles and Section 6 framing;
 - session authentication, negotiation, synchronization, and reconnection;
 - surface snapshots, semantic actions, input state, and durable replay;
 - the core widget vocabulary and optional presentation modules;
@@ -45,6 +45,15 @@ appear in all capitals.
 Unless expressly marked informative, prose and tables in this document are
 normative. Examples are informative unless an accompanying sentence states
 otherwise.
+
+A correctness requirement MUST be verifiable from a single endpoint's local
+view: its durable artifacts, its volatile state, and the messages it has
+received. A requirement that depends on the peer's future behavior MUST be
+written as a conditional whose antecedent is the message or session-state
+transition that witnesses that behavior. The words "when connected", "while
+connected", and their equivalents MAY appear only in requirements governing
+latency, freshness, or feature availability, never in requirements governing
+correctness (Section 3, invariants 8 and 9).
 
 ### 2.2 Artifact precedence
 
@@ -106,6 +115,24 @@ JSON-RPC exchange or a transport API.
    enumerated capability expressly permits it.
 7. Partial understanding MUST fail safely. A receiver MUST NOT silently weaken
    an unrecognized constraint into permission to perform a broader action.
+8. **Liveness independence.** No requirement of this document conditions
+   correctness on the liveness, reachability, or timeliness of the peer
+   endpoint; peer availability determines when an outcome occurs, never which
+   outcome is correct. Every guarantee of eventual behavior is conditional on
+   a session forming, and is void, not violated, while none exists.
+   Consequently, an endpoint MAY close any connection at any moment, in any
+   session state, without violating this document. This licence extends to
+   closing, never to dialing, whose policy each transport profile governs.
+9. **Crash invariance.** Every correctness requirement holds under process
+   death, suspension with arbitrarily delayed resumption, and restart of
+   either endpoint, at any point and in any interleaving, including during
+   the requirement's own execution. An endpoint MUST make every transition of
+   its protocol-visible durable state (Section 3.1) atomic or repeatable:
+   recovery from its durable artifacts alone MUST reach a state this document
+   permits — whether the previous process exited, crashed, or was killed —
+   and a repeated attempt MUST NOT change protocol-visible durable state
+   beyond what one completed attempt changes. Exactly-once external side
+   effects remain expressly unpromised (Section 14.4).
 
 The boundary is therefore not “code versus no computation.” The boundary is
 application-defined executable behavior versus finite operations selected and
@@ -117,6 +144,105 @@ authored alternative. It MUST NOT derive, transform, filter, parse application
 data, or otherwise construct an alternative. In particular, this operation
 does not authorize a Companion to implement Org visibility, folding, or any
 other application-specific semantics.
+
+> Informative: invariants 8 and 9 are the document's design generator rather
+> than two more rules beside the others. On the reference platform the
+> scheduler kills or freezes any backgrounded process without notice; frozen,
+> dead, and slow are indistinguishable from across a silent transport, and a
+> thawed process resumes with severed sockets believing no time has passed.
+> Removing liveness from the correctness contract is what makes all of that
+> harmless: a live peer buys latency and freshness, never correctness. It is
+> also why this document defines no heartbeat, no keepalive, no graceful
+> shutdown, and no session resumption — the conditions those mechanisms
+> detect or negotiate have no correctness to protect here. Idempotent
+> revisioned snapshots (Section 13.2), durable event identifiers (Section
+> 14.4), and recovery as the only startup path are the mechanisms by which
+> the invariants are honored; the adversarial suite (Section 24.6) is how
+> they are witnessed.
+
+### 3.1 Durability domains
+
+Durable state is divided into two domains by owner; no artifact is owned
+jointly, and an endpoint MUST NOT depend on the peer's disk surviving.
+
+The Companion's domain is presentation and pending input: everything required
+to render, gate, and queue with no session and no Emacs process in existence.
+
+Emacs's domain is application effect and acceptance memory: everything
+required to apply each occurrence at most once deliberately, and to re-derive
+every declared surface from application state.
+
+The artifacts inventoried in Section 3.2 are exhaustively the
+protocol-visible durable state named by invariant 9. An implementation MAY
+hold additional private durable state; such state MUST NOT alter
+protocol-visible behavior.
+
+### 3.2 Durable-artifact inventory
+
+Each row names the artifact, the point at which it MUST be durably committed,
+its crash rule under invariant 9, and its erasure boundary. Each transition in
+the Committed column is a crash boundary: a conformance suite SHOULD exercise
+process termination immediately before and after it (Section 24.6).
+
+Companion domain:
+
+| Artifact | Committed | Crash rule | Cleared by |
+|---|---|---|---|
+| Pairing token and pairing identity (Section 9.1) | at pairing completion, before the first authenticated session | atomic; a partial pairing is no pairing | revocation or re-pairing |
+| Surface cache — latest accepted snapshot per present surface (Section 13.5) | before returning `applied` (Section 13.2) | atomic with the revision floor; persist-and-present is one transition | tombstone at a higher revision; revocation |
+| Revision floors and tombstones (Sections 13.2–13.3) | with the accepting result | monotonic; MUST NOT regress after restart | revocation only; a tombstone outlives its surface |
+| Input drafts — latest non-password value per surface and node (Sections 13.6, 14.6) | no later than any event admitted from the same interaction (Section 15.1) | repeatable last-writer; never partial per value | the clearing boundaries of Section 24.6 item 17: acknowledgement, reset, removal, type change, tombstone, revocation |
+| Durable event queue, including captured fields (Section 15.1) | before any wake or delivery attempt | admission, dedupe replacement, and counter advance are one transaction (Section 15.2); deletion only after a permanent result (Section 15.3) | permanent result; expiry; revocation |
+| `queue_seq` counter (Section 15.1) | with each admission | strictly increasing; MUST NOT regress after restart | revocation |
+| Effective wall-clock high-water mark (Section 15.2) | as time genuinely passes | repeatable; never trusted beyond monotonic corroboration | revocation |
+| Trigger registrations (Section 21.1) | at atomic replace-set acceptance | whole-set atomic; no partial set survives | next replace-set; revocation |
+| Throttle state, one-shot and boot-generation receipts (Sections 21.2, 21.5) | in the same transaction as the occurrence's admission | atomic with admission; a restart MUST NOT permit an early or duplicate fire | trigger removal; revocation |
+| Reminder registrations (Section 18.6) | at acceptance | the at-least-once presentation obligation survives restart | completion or removal; revocation |
+| Disconnection time (Section 10.4) | before accepting any new offline interaction | conservative on loss: the earliest provable time | next session reaching `READY` |
+| Platform-artifact bindings — widget instances, tile slots, pinned shortcuts (Sections 13.4, 20.3) | at platform grant | repeatable rebind; MUST survive host restore and rekeying | platform removal; revocation |
+
+Emacs domain:
+
+| Artifact | Committed | Crash rule | Cleared by |
+|---|---|---|---|
+| Application state | out of protocol scope; anchors the domain | Emacs's own guarantees | — |
+| Accepted EventId records (Section 14.4) | before answering `accepted`, atomically with the effect or a durable work item owning it | retained at least 604800 seconds; a repeated ID MUST answer `duplicate` | retention expiry; revocation |
+| Durable work items — accepted but uncompleted effects (Section 14.4) | before answering `accepted` | repeatable to completion; owns its effect across restarts | completion |
+| Per-surface revision counters and absorbed floors (Sections 13.2, 10.3) | at each floor absorption | monotonic; Emacs MUST NOT author at or below a persisted floor | revocation |
+| Pairing token (Section 9.1) | at pairing completion | atomic | revocation or re-pairing |
+
+### 3.3 Durable-format versioning
+
+Every durable artifact MUST carry a format version, written at first
+creation. A reader encountering a version it does not understand MUST NOT
+guess, partially read, or truncate; it MUST fail closed for that artifact and
+surface a diagnostic. A writer that changes a format MUST migrate from every
+prior version it ever shipped, and each migration MUST be atomic or
+repeatable (invariant 9). The absence of a version marker is itself a
+version: it identifies the first shipped format and MUST be migrated, never
+assumed equivalent to the current one.
+
+### 3.4 Loss and corruption
+
+An endpoint that cannot read one of its durable artifacts MUST fail closed
+for that artifact: it MUST NOT fabricate a substitute value, and where this
+document defines a conservative fallback — the earliest provable
+disconnection time (Section 10.4), conservative persisted throttle time
+(Section 21.2) — it MUST adopt that fallback. Loss of the durable event
+queue is loss of user intent: the Companion MUST surface it to the user and
+MUST NOT claim the affected interactions were delivered. Loss of Emacs's
+accepted-EventId records reopens the duplicate-application window: Emacs
+SHOULD surface it, and during the affected period protection against
+re-application falls to handler idempotency (Section 14.4).
+
+> Informative: the snapshot design makes most Companion artifacts
+> self-healing — a reconnecting Emacs re-pushes every surface, so a lost
+> cache costs one round of freshness, not correctness. Exactly two artifacts
+> are irreplaceable and deserve the strongest storage an implementation can
+> give them: the event queue, which is the only copy of the user's
+> undelivered intent, and Emacs's acceptance memory, which is the only
+> protection against deliberate re-application. Ranking storage effort by
+> this asymmetry is the practical content of the two-domain split.
 
 ## 4. JSON data model
 
@@ -383,23 +509,49 @@ replaced before accepting a total-limit result.
 
 Transport facts do not change endpoint authority or method direction. Emacs
 MUST send `session.hello` after a transport connection is established,
-regardless of which endpoint bound or dialed the underlying transport.
+regardless of which endpoint bound or dialed the underlying transport and
+regardless of the profile in use.
 
-Only `android-loopback-tcp` is defined by this document. A future WebSocket,
-Unix-domain-socket, or other profile MUST completely define its addressing,
-framing, authentication floor, connection initiator, and failure behavior
-before an implementation advertises that profile.
+A transport profile is a complete statement of: the address family and default
+address; which endpoint binds and which dials; the framing that carries
+Section 7 messages; the authentication floor; confidentiality; the wake
+mechanism, if any; and failure behavior. This document defines four profiles,
+Sections 5.2 through 5.5. Every profile carries the Section 9 mutual HMAC
+handshake unchanged, the Section 10 session lifecycle unchanged, and the
+single-authority, supersession, and redial rules of Section 5.6. A profile
+identifier is a Section 4.4 identifier.
 
-### 5.2 `android-loopback-tcp`
+An implementation MUST NOT advertise a profile this document does not define,
+and MUST show in its pairing UI which profiles it offers. A future profile
+MUST completely define every property above before an implementation
+advertises it. Nothing on the wire names the profile: the connection itself
+determines it, and an endpoint MUST NOT accept a connection under one profile
+and then apply another profile's rules to it.
+
+The two endpoints of one pairing MAY use different profiles across sessions.
+Pairing identity, the token, EventId receipts, and every Section 3 durable
+artifact are profile-independent.
+
+| Profile | Binder | Dialer | Framing | Confidentiality | Status |
+|---|---|---|---|---|---|
+| `loopback-tcp` (5.2) | Companion | Emacs | Section 6 | none | REQUIRED of every Emacs endpoint; the Companion baseline |
+| `loopback-unix` (5.3) | Companion | Emacs | Section 6 | none on the wire; filesystem-scoped | OPTIONAL |
+| `network-tls` (5.4) | Companion | Emacs | Section 6 inside TLS | TLS | REQUIRED of a Companion that does not share a host with Emacs |
+| `loopback-websocket` (5.5) | Emacs | Companion | one message per WebSocket text message | none | OPTIONAL |
+
+### 5.2 `loopback-tcp`
 
 | Property | Requirement |
 |---|---|
 | Binder | Companion endpoint |
 | Dialer | Emacs endpoint |
+| Address family | IPv4 loopback |
 | Default address | `127.0.0.1` |
 | Default port | `8765` |
-| Framing | Section 6 Content-Length framing |
+| Framing | Section 6 Content-Length framing; no header field other than `Content-Length` |
 | Authentication floor | Section 9 mutual HMAC authentication |
+| Confidentiality | none |
+| Wake | Android only (Section 5.7) |
 
 The Companion MUST bind only to an IP loopback interface. It MUST NOT bind an
 EBP listener to `0.0.0.0`, a LAN address, or another externally reachable
@@ -407,47 +559,209 @@ address under this profile. An implementation MAY make the port configurable;
 if it does, endpoint discovery is an out-of-band profile parameter and MUST be
 shown in the Companion's pairing UI.
 
-The `android-loopback-tcp` core profile permits exactly one paired Emacs
-authority and one authenticated authoritative session at a time. Creating a new
-pairing MUST first revoke the old pairing under Section 9.1. When a new session
-authenticates successfully, the Companion MUST send `session.superseded`
-(Section 11) on the older session's transport, best-effort, and then MUST
-terminate the older session
-before the new session enters `SYNCING`. Before assembling the new session's
-welcome, the Companion MUST conclude every pending inbound request of the
-terminated session: each is either fully applied with its response committed to
-the old transport, or discarded without effect. A terminated session's request
-MUST NOT alter any state the new session's welcome reports. A pairing identity
-names one Emacs authority: concurrent processes sharing it contend for the
-single authoritative session, and a superseded endpoint MUST stand down rather
-than contend — an endpoint receiving `session.superseded` MUST NOT
-automatically redial for at least 60 seconds and SHOULD require explicit user
-intent where a user is present. Because the notification is best-effort, an
-endpoint MUST treat any transport close it did not initiate as possible
-supersession and apply jittered backoff to automatic redials. The Companion MUST continue to accept
-new loopback connections and allow each to attempt the Section 9 handshake while
-an authenticated session exists — supersession depends on it — and MUST bound the
-number of concurrent pre-authentication connections. The bound MUST NOT become
-a refusal: a pre-authentication connection that has not completed the Section 9
-handshake within 10 seconds MUST be closed, and when the bound is reached, a
-new dial MUST evict the oldest pre-authentication connection rather than be
-refused — newest-wins, mirroring supersession, so that a legitimate dial
-always gets a handshake attempt even under local flooding. A listener that refuses or
-ignores a second dial while a session, possibly a zombie whose transport has not
-yet closed, is open is non-conformant. A future multi-authority profile MUST
-define active-identity selection, visible-surface and theme ownership, trigger
-execution, and platform-artifact namespacing; this profile does not. Within this
-single-authority profile, trigger firing and reminder presentation are
-device-lifetime obligations, not session-scoped: they proceed with no session
-and are uninterrupted by session supersession (Sections 21.1, 18.6).
+This profile authenticates endpoints but does not encrypt messages, and an
+unprivileged local process that binds or races the configured port can
+interpose on it (Sections 9.3 and 23.6). A deployment requiring
+confidentiality against privileged local software, or interposition
+resistance, MUST use Section 5.3 or Section 5.4.
 
-This profile authenticates endpoints but does not encrypt messages. An
-implementation requiring confidentiality against privileged local software
-MUST use a transport profile that provides it.
+Platforms: an Android Companion, a desktop Companion on any operating system,
+a Node-hosted Companion, and a bridged deployment in which a platform port
+forward presents the Companion's loopback listener on the Emacs host's own
+loopback interface all implement this profile without variation. The Android
+wake mechanism of Section 5.7 applies only to an Android Companion.
 
-### 5.3 `android-loopback-tcp` wake
+### 5.3 `loopback-unix`
 
-The Companion MUST grant `offline.wake` only when the user has configured an
+| Property | Requirement |
+|---|---|
+| Binder | Companion endpoint |
+| Dialer | Emacs endpoint |
+| Address family | Unix-domain stream socket, filesystem namespace |
+| Default address | a socket path in storage private to the Companion's application identity, shown in the pairing UI |
+| Framing | Section 6 Content-Length framing; no header field other than `Content-Length` |
+| Authentication floor | Section 9 mutual HMAC authentication |
+| Confidentiality | none on the wire; interposition requires the socket's filesystem permission |
+| Wake | none |
+
+This OPTIONAL profile is `loopback-tcp` with the port replaced by a filesystem
+path, for hosts on which both endpoints run under one operating-system user.
+The Companion MUST create the socket with permissions that admit only its own
+user, MUST unlink a stale socket file it owns before binding, and MUST NOT
+bind in a world-writable or shared directory. An abstract-namespace socket
+MUST NOT be used: it carries no permission bits and reintroduces the squatting
+exposure this profile exists to remove. Emacs MUST refuse to dial a socket
+file whose owner is not the current user.
+
+A Companion MAY offer this profile alongside `loopback-tcp`. It MUST NOT offer
+it as the only profile on a platform where the Emacs endpoint cannot open
+Unix-domain sockets. Everything in Section 5.2 not concerned with IP
+addressing applies unchanged.
+
+### 5.4 `network-tls`
+
+| Property | Requirement |
+|---|---|
+| Binder | Companion endpoint |
+| Dialer | Emacs endpoint |
+| Address family | TCP over any IP interface the user has approved |
+| Default port | `8766` |
+| Framing | Section 6 Content-Length framing inside a TLS 1.3 or later stream; no header field other than `Content-Length` |
+| Authentication floor | Section 9 mutual HMAC authentication inside the TLS stream, plus certificate pinning |
+| Confidentiality | TLS |
+| Wake | none |
+
+This is the profile Sections 9.3 and 23.6 require of a deployment whose
+threat model includes an on-path or local interposer, and the only profile
+available when the two endpoints do not share a host. A Companion on a
+platform on which Emacs cannot run MUST use it; an Android or desktop
+Companion MAY offer it in addition to a loopback profile.
+
+**Certificate.** At pairing time the Companion MUST generate a fresh
+self-signed certificate for the pairing identity, MUST hold its private key
+under the storage terms Section 9.1 imposes on the token, and MUST display
+the SHA-256 digest of the certificate's DER-encoded SubjectPublicKeyInfo, as
+64 lowercase hexadecimal characters, alongside the pairing token in the same
+out-of-band channel. Emacs MUST record that digest with the pairing, MUST
+verify it against the presented leaf certificate on every connection before
+sending `session.hello`, and on mismatch MUST close the transport without
+sending any frame and MUST NOT automatically redial. Emacs MUST NOT rely on
+certificate-authority validation or hostname matching under this profile.
+Pairing revocation (Section 9.1) MUST destroy the private key and the
+recorded digest.
+
+**Why TLS is not the authentication.** The pinned certificate authenticates
+the Companion to Emacs and protects the stream. The Section 9 handshake, run
+inside the stream, authenticates both endpoints to each other with the
+pairing token and binds the session nonces. Neither replaces the other: an
+endpoint that skips the Section 9 handshake because TLS succeeded, or skips
+pinning because the handshake would catch an impostor, is non-conformant. The
+proof domains of Section 9.3 are unchanged.
+
+**Addressing and discovery.** The Companion MUST bind only interfaces the
+user has explicitly approved in the pairing UI, MUST show the listener's
+address and port there, and SHOULD advertise a DNS-SD service instance of
+type `_ebp._tcp` whose TXT record carries the non-secret pairing ID, so Emacs
+can locate it on a link-local network. The advertisement MUST NOT carry the
+token, the certificate digest, or any Section 23.3 sensitive value. Emacs MAY
+be configured with a host and port directly; discovery is an aid, never an
+authority.
+
+**Session scope.** A Companion whose platform suspends listeners in the
+background MUST treat every such suspension as a transport close under
+Section 5.6 and MUST NOT report a session as `READY` while it cannot service
+the stream. Durable events accumulate under Section 15 exactly as when
+disconnected under any other profile. Emacs's jittered redial (Section 5.6)
+is the reconnection mechanism; there is no wake.
+
+**Limits.** Section 4.5 limits are unchanged. A Companion MAY additionally
+bound the number of concurrent incomplete TLS handshakes per source address;
+the Section 5.6 pre-authentication bound and eviction rule apply once the TLS
+handshake has completed.
+
+### 5.5 `loopback-websocket`
+
+| Property | Requirement |
+|---|---|
+| Binder | Emacs endpoint |
+| Dialer | Companion endpoint |
+| Address family | IPv4 loopback |
+| Default address | `ws://127.0.0.1:8767` |
+| Framing | one Section 7 message per WebSocket text message ([RFC6455]); Section 6 framing does not apply |
+| Authentication floor | Section 9 mutual HMAC authentication, plus the Origin rule |
+| Confidentiality | none; loopback only |
+| Wake | none |
+
+This OPTIONAL profile exists for a Companion that runs inside a browser and
+can hold no transport other than WebSocket. Emacs binds; the Companion
+dials. Emacs still speaks first: on each accepted connection Emacs MUST send
+`session.hello`, and the Companion MUST answer it exactly as under any other
+profile. Emacs MUST bind only a loopback interface and MUST NOT offer this
+profile off-host.
+
+**Origin.** Emacs MUST validate the WebSocket `Origin` header against a
+user-configured allowlist during the HTTP upgrade and MUST refuse the upgrade
+on mismatch, before any EBP frame is exchanged. An absent `Origin` MUST be
+refused under this profile.
+
+**Message bound.** A message assembled from fragments MUST be bounded by
+`max_frame_bytes`. On overflow the receiver MUST discard the partial message
+and every continuation frame until the message's final frame, SHOULD emit
+`1400 frame-too-large` on `log.error` under Section 6.2's conditions, and
+MUST keep the connection open. This is the WebSocket form of Section 6.2's
+byte-exact skip. A binary message MUST be refused by closing the connection.
+Because Emacs accepts connections under this profile, the Section 4.1
+receiver rejections that Section 6.2 scopes as RECOMMENDED for a dialing
+Emacs are REQUIRED of Emacs here.
+
+**Encoding.** A sender MUST serialize under Section 4.1 and transmit the UTF-8
+octets as one text message.
+
+**Liveness.** WebSocket ping and pong provide transport keepalive. An
+endpoint MAY send pings; every endpoint MUST answer them. No EBP method is
+added for liveness.
+
+**Roles under Section 5.6.** Emacs, as binder, enforces the single-session
+rule and the pre-authentication bound: when a newer connection authenticates
+for a pairing identity, Emacs MUST conclude the older session's outstanding
+requests locally and close the older transport. The Companion, as dialer,
+applies the jittered redial after a close it did not initiate.
+`session.superseded` remains a Companion-sent notification, because the
+Companion owns session authority under every profile; it is not used under
+this profile.
+
+### 5.6 Single authority, supersession, and redial
+
+Every profile in this document permits exactly one paired Emacs authority and
+one authenticated authoritative session per pairing identity at a time.
+Creating a new pairing MUST first revoke the old pairing under Section 9.1.
+
+Under a profile in which the Companion binds (Sections 5.2 through 5.4): when
+a new session authenticates successfully, the Companion MUST send
+`session.superseded` (Section 11) on the older session's transport,
+best-effort, and then MUST terminate the older session before the new session
+enters `SYNCING`. Before assembling the new session's welcome, the Companion
+MUST conclude every pending inbound request of the terminated session: each
+is either fully applied with its response committed to the old transport, or
+discarded without effect. A terminated session's request MUST NOT alter any
+state the new session's welcome reports.
+
+A pairing identity names one Emacs authority: concurrent processes sharing it
+contend for the single authoritative session, and a superseded endpoint MUST
+stand down rather than contend — an endpoint receiving `session.superseded`
+MUST NOT automatically redial for at least 60 seconds and SHOULD require
+explicit user intent where a user is present. Because the notification is
+best-effort, the dialing endpoint under any profile MUST treat any transport
+close it did not initiate as possible supersession and apply jittered backoff
+to automatic redials.
+
+The binding endpoint MUST continue to accept new connections and allow each
+to attempt the Section 9 handshake while an authenticated session exists —
+supersession depends on it — and MUST bound the number of concurrent
+pre-authentication connections. The bound MUST NOT become a refusal: a
+pre-authentication connection that has not completed the Section 9 handshake
+within 10 seconds MUST be closed, and when the bound is reached, a new dial
+MUST evict the oldest pre-authentication connection rather than be refused —
+newest-wins, mirroring supersession, so that a legitimate dial always gets a
+handshake attempt even under local flooding. A listener that refuses or
+ignores a second dial while a session, possibly a zombie whose transport has
+not yet closed, is open is non-conformant.
+
+A future multi-authority profile MUST define active-identity selection,
+visible-surface and theme ownership, trigger execution, and platform-artifact
+namespacing; no profile in this document does. Under every profile, trigger
+firing and reminder presentation are device-lifetime obligations, not
+session-scoped: they proceed with no session and are uninterrupted by session
+supersession (Sections 21.1, 18.6).
+
+### 5.7 Wake
+
+A profile MAY define a wake mechanism by which the Companion asks the Emacs
+host to establish a transport. The Companion MUST grant `offline.wake`
+(Section 22.1) only when its platform defines a wake mechanism in this
+section and the user has configured its target. One platform does.
+
+**Android, under `loopback-tcp`.** The Companion MUST grant `offline.wake` only when the user has configured an
 OS-local, explicit wake target for the paired Emacs host. The target MUST name
 an exact application component or comparably narrow platform endpoint; an
 implicit broadcast, shell command, URI handler, or network destination MUST NOT
@@ -485,6 +799,15 @@ authorization was removed after a descriptor was cached, the Companion MUST
 NOT signal the former target; it MUST retain the already admitted event as an
 ordinary `queue` event and SHOULD show a non-sensitive local diagnostic.
 
+**Every other platform and profile.** No wake mechanism is defined and
+`offline.wake` MUST NOT be granted. A desktop Companion MUST NOT launch or
+signal an Emacs process: no inert target satisfying the no-parameter rule
+above is defined for desktop hosts. A browser Companion cannot launch
+anything. A Companion that does not share a host with Emacs has no host to
+signal. Emacs's automatic redial under Section 5.6 is the reconnection
+mechanism on these platforms, and a `wake` descriptor cannot be authored
+without the grant (Section 14.1).
+
 ## 6. Content-Length framing
 
 ### 6.1 Sender syntax
@@ -501,9 +824,11 @@ Content-Length: <decimal-octet-count>\r\n
 The sender MUST use the ASCII spelling `Content-Length`, one ASCII space after
 the colon, an unsigned decimal integer with no leading zeroes except the value
 `0`, and CRLF line endings. The sender MUST NOT emit more than one
-`Content-Length` field. Under the `android-loopback-tcp` profile a sender MUST
-NOT emit any header field other than `Content-Length`; the header section is
-therefore exactly `Content-Length: <decimal-octet-count>\r\n\r\n`. A future
+`Content-Length` field. Under every Content-Length-framed profile (Sections
+5.2 through 5.4) a sender MUST NOT emit any header field other than
+`Content-Length`; the header section is therefore exactly
+`Content-Length: <decimal-octet-count>\r\n\r\n`. Section 5.5 does not use this
+framing. A future
 transport profile that permits additional header fields MUST define their
 syntax, including whether whitespace after the colon is required, and MUST
 state the header-section budget an endpoint may rely on.
@@ -1011,8 +1336,8 @@ against an active local man-in-the-middle — and interposing on a loopback
 path requires no privilege: an ordinary local process that binds or races
 the configured port and proxies bytes passes this handshake through intact
 and then controls the session. That attacker is outside the threat model of
-`android-loopback-tcp`; a deployment that includes it MUST use a stronger
-transport profile.
+the loopback profiles (Sections 5.2, 5.3, and 5.5); a deployment that
+includes it MUST use `network-tls` (Section 5.4).
 
 ## 10. Session lifecycle and negotiation
 
@@ -1274,7 +1599,7 @@ means `READY`.
 | `session.hello` | Emacs | request | `CONNECTED` | core | 9 |
 | `auth.response` | Emacs | request | `CHALLENGED` | core | 9 |
 | `session.ready` | Emacs | request | `SYNCING` | core | 10 |
-| `session.superseded` | Companion | notification | S, R | core | 5.2 |
+| `session.superseded` | Companion | notification | S, R | core | 5.6 |
 | `surface.update` | Emacs | request | S, R | core / surface capability | 13 |
 | `surface.remove` | Emacs | request | S, R | core for reported surfaces | 13 |
 | `surface.release` | Emacs | request | R | core | 13.1 |
@@ -1733,7 +2058,7 @@ durable replay. It MUST NOT author `wake` unless `offline.wake` was granted.
 `ttl_s` and `dedupe` MUST be absent when `when_offline` is `drop`; `ttl_s` MUST
 be present for `queue` and `wake`.
 
-The wake signal (Section 5.3) is authorized by the current session's
+The wake signal (Section 5.7) is authorized by the current session's
 `offline.wake` grant, not by a persistently configured wake target alone. A
 Companion that receives a descriptor whose `when_offline` is `wake` in a session
 that did not grant `offline.wake` MUST reject the containing document with
@@ -4206,7 +4531,7 @@ this schema:
 | `on_fire` | array of local response objects | no | `[]`; at most `limits.max_trigger_responses` entries |
 
 For `policy: wake`, the signal the Companion later sends is governed by
-Section 5.3 in full, including its inertness rule.
+Section 5.7 in full, including its inertness rule.
 
 The Companion MUST validate the complete set, including every type, predicate,
 offline policy, local response, resource limit, and required permission
@@ -4236,7 +4561,7 @@ negotiation: a granted `triggers.set` remains in force until it is replaced by
 an empty set, the pairing is revoked (Section 9.1), or a required OS permission
 is withdrawn. A later session that does not re-grant `triggers` MUST NOT by
 itself disarm previously accepted registrations, and session supersession
-(Section 5.2) MUST NOT interrupt firing.
+(Section 5.6) MUST NOT interrupt firing.
 
 Before comparing registrations, the Companion MUST apply every documented
 default. An ID whose resulting complete entry is equal under Section 4.3 is
@@ -4915,8 +5240,10 @@ local process. The HMAC handshake supplies that authentication. It does not
 provide confidentiality or per-message integrity against a local attacker able
 to interpose on the loopback path — which includes an unprivileged process
 that binds or races the configured port, not only a privileged one. A
-deployment with a stronger threat model SHOULD use an authenticated
-and encrypted transport profile. A Companion MUST treat persistent failure to
+deployment with a stronger threat model SHOULD use `network-tls` (Section
+5.4), which removes the interposition exposure entirely; `loopback-unix`
+(Section 5.3) removes the port-squatting exposure on hosts that support it.
+A Companion MUST treat persistent failure to
 bind its configured port as possible squatting and surface it in the pairing
 UI, and MUST NOT listen on a port other than the one that UI displays.
 
@@ -4927,8 +5254,8 @@ UI, and MUST NOT listen on a port other than the one that UI displays.
 A conforming EBP 2 Companion MUST implement:
 
 - the JSON and safe-integer rules in Section 4;
-- at least one complete transport profile, including Section 6 framing for
-  `android-loopback-tcp`;
+- at least one complete Section 5 transport profile; a Companion offering a
+  Content-Length-framed profile MUST implement Section 6 framing;
 - JSON-RPC request, notification, result, error, direction, class, ordering,
   cancellation, and unknown-method behavior;
 - the pairing handshake and fail-closed session state machine;
@@ -4956,6 +5283,8 @@ A conforming EBP 2 Emacs endpoint MUST implement:
 
 - the corresponding JSON-RPC, framing, authentication, and session rules,
   with Section 6.2's receiver strictness scoped as that section states;
+- the `loopback-tcp` transport profile (Section 5.2); Sections 5.3 through
+  5.5 are OPTIONAL for the Emacs endpoint;
 - `session.hello`, proof and welcome verification, synchronization ordering,
   queue replay, and `session.ready`;
 - persistent monotonic per-surface revisions and absorption of Companion

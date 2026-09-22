@@ -4,7 +4,7 @@
   "fixtures": [
     {
       "file": "01-hello.bin",
-      "profile": "android-loopback-tcp",
+      "profile": "loopback-tcp",
       "kind": "positive",
       "rule": "6.1 sender syntax: exact Content-Length header, CRLF, UTF-8 body",
       "expect_messages": [
@@ -27,7 +27,7 @@
     },
     {
       "file": "02-handshake.bin",
-      "profile": "android-loopback-tcp",
+      "profile": "loopback-tcp",
       "kind": "positive",
       "rule": "24.6 item 2: consecutive frames with no delimiter; 9.3 known-answer proofs are byte-exact",
       "expect_messages": [
@@ -115,7 +115,7 @@
     },
     {
       "file": "03-utf8-length.bin",
-      "profile": "android-loopback-tcp",
+      "profile": "loopback-tcp",
       "kind": "positive",
       "rule": "24.6 item 1: non-ASCII UTF-8 body whose Content-Length (137) differs from its character count (131)",
       "expect_messages": [
@@ -133,7 +133,7 @@
     },
     {
       "file": "04-empty-params.bin",
-      "profile": "android-loopback-tcp",
+      "profile": "loopback-tcp",
       "kind": "positive",
       "rule": "7.1: a method with no parameters sends params {}",
       "expect_messages": [
@@ -147,14 +147,14 @@
     },
     {
       "file": "10-partial-header.bin",
-      "profile": "android-loopback-tcp",
+      "profile": "loopback-tcp",
       "kind": "negative",
       "rule": "6.2/24.6 item 3: EOF inside a header terminates the session",
       "expect_error": "incomplete-frame"
     },
     {
       "file": "11-missing-length.bin",
-      "profile": "android-loopback-tcp",
+      "profile": "loopback-tcp",
       "kind": "negative",
       "roles": [
         "companion"
@@ -164,7 +164,7 @@
     },
     {
       "file": "12-duplicate-length.bin",
-      "profile": "android-loopback-tcp",
+      "profile": "loopback-tcp",
       "kind": "negative",
       "roles": [
         "companion"
@@ -174,14 +174,14 @@
     },
     {
       "file": "13-invalid-length.bin",
-      "profile": "android-loopback-tcp",
+      "profile": "loopback-tcp",
       "kind": "negative",
       "rule": "6.2: non-decimal Content-Length closes the connection",
       "expect_error": "close"
     },
     {
       "file": "14-signed-length.bin",
-      "profile": "android-loopback-tcp",
+      "profile": "loopback-tcp",
       "kind": "negative",
       "roles": [
         "companion"
@@ -191,14 +191,14 @@
     },
     {
       "file": "15-oversized-declaration.bin",
-      "profile": "android-loopback-tcp",
+      "profile": "loopback-tcp",
       "kind": "negative",
       "rule": "6.2/24.6 item 3: body declaration above 4194304 closes immediately",
       "expect_error": "close"
     },
     {
       "file": "16-invalid-utf8.bin",
-      "profile": "android-loopback-tcp",
+      "profile": "loopback-tcp",
       "kind": "negative",
       "roles": [
         "companion"
@@ -208,7 +208,7 @@
     },
     {
       "file": "17-invalid-json.bin",
-      "profile": "android-loopback-tcp",
+      "profile": "loopback-tcp",
       "kind": "negative",
       "roles": [
         "companion"
@@ -218,7 +218,7 @@
     },
     {
       "file": "18-batch-array.bin",
-      "profile": "android-loopback-tcp",
+      "profile": "loopback-tcp",
       "kind": "negative",
       "roles": [
         "companion"
@@ -228,7 +228,7 @@
     },
     {
       "file": "19-duplicate-members.bin",
-      "profile": "android-loopback-tcp",
+      "profile": "loopback-tcp",
       "kind": "negative",
       "roles": [
         "companion"
@@ -238,14 +238,14 @@
     },
     {
       "file": "20-header-too-large.bin",
-      "profile": "android-loopback-tcp",
+      "profile": "loopback-tcp",
       "kind": "negative",
       "rule": "6.2: header section above 8192 octets closes the connection",
       "expect_error": "close"
     },
     {
       "file": "21-deep-nesting.bin",
-      "profile": "android-loopback-tcp",
+      "profile": "loopback-tcp",
       "kind": "negative",
       "roles": [
         "companion"
@@ -255,7 +255,7 @@
     },
     {
       "file": "22-integer-out-of-range.bin",
-      "profile": "android-loopback-tcp",
+      "profile": "loopback-tcp",
       "kind": "negative",
       "expect_error": "parse-error",
       "rule": "4.2/6.2/24.6 item 3: an integer outside the safe range cannot be carried by the EBP data model and is rejected during decoding"
