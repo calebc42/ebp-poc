@@ -2984,6 +2984,16 @@ member-specific prose immediately after the table supplies its type. These
 definitions are cumulative and MUST be projected together into `contract.json`;
 a receiver MUST NOT apply type coercion omitted by them.
 
+A member whose type depends on its node — `items`, `selected`, `fill`,
+`size`, and `value` — is projected under a `node.member` key in
+`contract.json` `field_types` (for example `slider.value`, `icon.size`),
+mirroring how `enums` is keyed; the bare member key keeps the marker
+`varies-per-node`. The Section 16.5 universal attributes are projected under
+their bare keys. A typed consumer resolves a member by the `node.member`
+key first, then the node-scoped and bare `enums` entries, then the bare
+`field_types` key, and treats a field beginning `on_` as an ActionDescriptor
+as this section already requires.
+
 `font_weight` is `normal`, `bold`, or an integer multiple of 100 from 100
 through 900. `selectable`, `italic`, `underline`, and `mono` are booleans.
 `size`, `spacing`, `run_spacing`, `content_padding`, `elevation`, and

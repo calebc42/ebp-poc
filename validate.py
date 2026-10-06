@@ -336,6 +336,87 @@ def check_contract():
         problem("contract.json: text_input_schema drifted from amendment #181")
 
 
+# ------------------------------------------------- field-type projection ---
+FIELD_TYPES = contract.get("field_types", {})
+ENUMS = contract.get("enums", {})
+# Enum domains that are not node members (dialogs, notifications, editor
+# diagnostics, toolbars, tab items, themes, window classes, snackbar results,
+# canvas ops). Every other dotted `enums` key MUST name a node member
+# (amendment #192, §16.2.1): a downstream renderer's domain is not EBP's.
+NON_NODE_ENUM_DOMAINS = {
+    "dialog.style", "notification.priority", "diagnostic.severity",
+    "toolbar.placement", "tab_item.icon_position", "theme.layout_direction",
+    "window.size_class", "snackbar.result", "canvas.op",
+}
+
+
+def node_members(node: str) -> list[str]:
+    row = NODE_SCHEMA.get(node, {})
+    return list(row.get("required", [])) + list(row.get("optional", []))
+
+
+def resolve_member_type(node: str, member: str):
+    """The §17.1 resolution order (amendment #192): the `node.member`
+    field type, then a node-scoped or bare enum domain, then the bare field
+    type, then the `on_` ActionDescriptor rule and the `children` rule.
+    Returns None when nothing in the contract types the member."""
+    scoped = FIELD_TYPES.get(f"{node}.{member}")
+    if scoped is not None:
+        return scoped
+    if f"{node}.{member}" in ENUMS or member in ENUMS:
+        return "enum"
+    bare = FIELD_TYPES.get(member)
+    if bare is not None and bare != "varies-per-node":
+        return bare
+    if member.startswith("on_"):
+        return "action-descriptor"
+    if member == "children":
+        return "node-array"
+    return None
+
+
+def check_field_type_projection():
+    for key, tag in FIELD_TYPES.items():
+        if "." not in key:
+            continue
+        node, member = key.split(".", 1)
+        if node not in NODE_SCHEMA:
+            problem(f"contract.json: field_types `{key}` names no node")
+        elif member not in node_members(node):
+            problem(f"contract.json: field_types `{key}` is not a member "
+                    f"of `{node}`")
+        if tag == "varies-per-node":
+            problem(f"contract.json: node-scoped field_types `{key}` cannot "
+                    "be `varies-per-node`")
+        if tag == "enum" and key not in ENUMS and member not in ENUMS:
+            problem(f"contract.json: field_types `{key}` is `enum` without "
+                    "an enums domain")
+    for member, tag in FIELD_TYPES.items():
+        if tag != "varies-per-node" or "." in member:
+            continue
+        for node in NODE_SCHEMA:
+            if member in node_members(node) and \
+                    f"{node}.{member}" not in FIELD_TYPES:
+                problem(f"contract.json: `{member}` varies per node but "
+                        f"`{node}.{member}` has no field type")
+    for node in NODE_SCHEMA:
+        for member in node_members(node):
+            if resolve_member_type(node, member) is None:
+                problem(f"contract.json: `{node}.{member}` has no field "
+                        "type, enum domain, or structural rule")
+    for attr in sorted(UNIVERSAL):
+        if attr not in FIELD_TYPES and attr not in ENUMS:
+            problem(f"contract.json: universal attribute `{attr}` has no "
+                    "field type")
+    for key in ENUMS:
+        if "." not in key or key in NON_NODE_ENUM_DOMAINS:
+            continue
+        node, member = key.split(".", 1)
+        if node not in NODE_SCHEMA or member not in node_members(node):
+            problem(f"contract.json: enums `{key}` is neither a node member "
+                    "nor a listed non-node domain (§16.2.1)")
+
+
 # ------------------------------------------------------- spec cross-check ---
 SENDER_MAP = {"emacs": "emacs", "companion": "companion", "either": "either"}
 
@@ -2031,6 +2112,7 @@ def check_text_input_goldens() -> int:
 # ------------------------------------------------------------------- main ---
 def main() -> int:
     check_contract()
+    check_field_type_projection()
     check_spec_sync()
     check_hmac_kat()
     check_walk_completeness()

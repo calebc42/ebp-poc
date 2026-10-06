@@ -44,7 +44,7 @@ header (SPEC.md):
   negotiated per-connection via `surface_profiles` (SPEC §10.2), not
   versioned.
 - **`contract_format`** — the shape of `contract.json` itself (currently
-  `11`). Implementations must consume the declared format rather than infer
+  `12`). Implementations must consume the declared format rather than infer
   compatibility from the protocol version alone.
 
 Releases are tagged off the protocol/spec numbers (e.g. `spec-1.0-rc`). The
