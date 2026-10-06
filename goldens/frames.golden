@@ -47,3 +47,6 @@
 46 {"jsonrpc":"2.0","method":"edit.delta","params":{"accept":true,"del":3,"document":"doc:notes/123","editor_id":"body","len":17,"seq":5,"session":"00112233445566778899aabbccddeeff","start":3,"text":"print()"}}
 47 {"id":"cd1","jsonrpc":"2.0","method":"edit.candidate.doc","params":{"document":"doc:notes/123","editor_id":"body","index":0,"seq":4,"session":"00112233445566778899aabbccddeeff"}}
 48 {"id":"cd1","jsonrpc":"2.0","result":{"doc":"Print ARGS to standard output."}}
+49 {"id":"sd0","jsonrpc":"2.0","method":"surface.update","params":{"data":{"journal":{"draft":"first lines","title":"Morning pages"}},"revision":45,"spec":{"children":[{"bind":{"text":"/journal/title"},"t":"text"},{"bind":{"value":"/journal/draft"},"id":"draft","t":"text_input"}],"t":"column"},"surface":"app:journal"}}
+50 {"id":"sd1","jsonrpc":"2.0","method":"surface.data","params":{"ops":[{"op":"set","path":"/journal/title","value":"Evening pages"},{"op":"remove","path":"/journal/draft"}],"revision":46,"surface":"app:journal"}}
+51 {"id":"sd1","jsonrpc":"2.0","result":{"present":true,"revision":46,"status":"applied"}}

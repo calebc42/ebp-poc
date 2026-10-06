@@ -66,6 +66,16 @@ MAX_DEPTH = contract["limits"]["fixed"]["max_json_depth"]
 MAX_NODES = contract["limits"]["fixed"]["max_nodes_per_snapshot"]
 MAX_CHILDREN = contract["limits"]["fixed"]["max_children_per_node"]
 MAX_VARIANTS = contract["limits"]["fixed"]["max_variants_per_host"]
+# Amendment #194 (SPEC 13.8): the surface data document and its bindings.
+DATA_SCHEMA = contract.get("data_model_schema", {})
+MAX_DATA_BYTES = contract["limits"]["fixed"].get("max_data_bytes", 0)
+MAX_DATA_DEPTH = contract["limits"]["fixed"].get("max_data_depth", 0)
+MAX_POINTER_BYTES = contract["limits"]["fixed"].get("max_pointer_bytes", 0)
+MAX_POINTER_SEGMENTS = contract["limits"]["fixed"].get("max_pointer_segments", 0)
+MAX_BINDINGS = contract["limits"]["fixed"].get("max_bindings_per_snapshot", 0)
+MAX_DATA_OPS = contract["limits"]["fixed"].get("max_data_ops", 0)
+UNBINDABLE_MEMBERS = set(DATA_SCHEMA.get("unbindable_members", []))
+UNBINDABLE_TAGS = set(DATA_SCHEMA.get("unbindable_tags", []))
 MAX_SEMANTIC_ACTIONS = \
     contract["limits"]["fixed"]["max_semantic_actions_per_node"]
 MIN_VARIANTS = VARIANT_SCHEMA.get("min_items", 2)
@@ -90,7 +100,7 @@ def check_contract():
                   "error_codes", "limits", "capabilities",
                   "variant_schema", "semantics_schema", "text_input_schema",
                   "renderer_profile_schema", "widget_size_variant_schema",
-                  "swipe_schema"):
+                  "swipe_schema", "data_model_schema"):
         if field not in contract:
             problem(f"contract.json: missing `{field}`")
     if contract.get("contract_format") != 12:
@@ -167,6 +177,41 @@ def check_contract():
         for code in entry.get("errors", []):
             if str(code) not in ERROR_CODES:
                 problem(f"contract.json: `{name}` names unknown error {code}")
+    # Amendment #194: the data document is one capability gating one method,
+    # one `surface.update` param, one universal attribute, and six limits.
+    if DATA_SCHEMA.get("capability") != "data.model" or \
+            "data.model" not in contract.get("capabilities", []):
+        problem("contract.json: `data.model` must be a registered capability "
+                "named by data_model_schema (amendment #194)")
+    data_method = METHODS.get("surface.data", {})
+    if data_method.get("capability") != "data.model" or \
+            data_method.get("params", {}).get("required") != \
+            ["surface", "revision", "ops"]:
+        problem("contract.json: `surface.data` must require surface, "
+                "revision, ops under data.model")
+    if "data" not in METHODS.get("surface.update", {}).get(
+            "params", {}).get("optional", []):
+        problem("contract.json: `surface.update` must admit optional `data`")
+    for name, expected in {
+            "max_data_bytes": 1048576, "max_data_depth": 32,
+            "max_pointer_bytes": 512, "max_pointer_segments": 32,
+            "max_bindings_per_snapshot": 10000, "max_data_ops": 1000,
+    }.items():
+        if fixed.get(name) != expected:
+            problem(f"contract.json: {name} must be {expected}")
+    if "bind" not in UNIVERSAL or \
+            contract.get("field_types", {}).get("bind") != "bind-object":
+        problem("contract.json: `bind` must be a universal attribute typed "
+                "bind-object")
+    for member in ("t", "id", "key", "children", "bind", "template", "args",
+                   "meta", "semantics", "variants", "swipe_start",
+                   "swipe_end"):
+        if member not in UNBINDABLE_MEMBERS:
+            problem(f"contract.json: `{member}` must be unbindable (13.8.3)")
+    for tag in ("action-descriptor", "node", "node-array", "variant-array",
+                "swipe-object", "semantics-object"):
+        if tag not in UNBINDABLE_TAGS:
+            problem(f"contract.json: `{tag}` must be an unbindable type")
     # Amendment #169: the candidate member registry and its closed kind
     # vocabulary must exist, and the gating feature must be registered.
     schema = contract.get("candidate_schema")
@@ -487,6 +532,7 @@ class NodeDocument:
 
     def __init__(self):
         self.node_count = 0
+        self.binding_count = 0
         self.ids: dict[str, str] = {}
         self.nodes: dict[str, dict] = {}
         self.action_refs: list[tuple[str, dict, str | None, str | None]] = []
@@ -1182,6 +1228,10 @@ def _check_node(value, path: str, depth: int, ctx: NodeDocument,
                     f"({MAX_NODE_DEPTH}) — reason node-depth")
         t = value["t"]
         node_type = t
+        if "bind" in value:
+            check_bind(value, path,
+                       t if isinstance(t, str) and t in NODE_TYPES else None,
+                       ctx)
         # Universal presentation identity attributes keep their identifier
         # type even on unknown/degraded nodes. A present malformed value is
         # not equivalent to omission (SPEC 16.1/16.3).
@@ -1287,6 +1337,8 @@ def _check_node(value, path: str, depth: int, ctx: NodeDocument,
         if node_type is not None and key == "semantics":
             continue  # recognized members/actions were checked explicitly;
                       # unknown semantics members are receiver-opaque.
+        if node_type is not None and key == "bind":
+            continue  # check_bind validated the Bind object (SPEC 13.8.3).
         if key in OPAQUE_NODE_WALK_MEMBERS:
             continue
         if (key in HOOK_KEYS or key == "on_trigger") \
@@ -1413,8 +1465,24 @@ def check_params(method: str, params, path: str):
                             problem(f"{path}: SyntaxStyle member `{m}` "
                                     f"on `{role}` is unregistered")
     # Structured members ride the node/action validators.
+    if method == "surface.data":
+        check_data_ops(params, path)
     if method in ("surface.update", "dialog.show"):
         spec = params.get("spec")
+        if method == "surface.update":
+            # Amendment #194: bindings resolve before the walk (SPEC 13.8.3).
+            if "data" in params or find_bind(spec, "") is not None:
+                try:
+                    spec = materialize(spec, params.get("data", {}),
+                                       f"{path}.spec", f"{path}.data")
+                except MaterializeError as error:
+                    problem(f"{error.path}: {error.reason}")
+                    return
+            stale_bind = find_bind(params.get("stale_spec"),
+                                   f"{path}.stale_spec")
+            if stale_bind is not None:
+                problem(f"{stale_bind}: stale_spec MUST NOT carry bind "
+                        "(SPEC 13.8.1)")
         if isinstance(spec, dict) and "views" in spec:
             views = spec["views"]
             if isinstance(views, dict):
@@ -1504,6 +1572,348 @@ def golden_lines(rel: str):
     for line in (GOLD / rel).read_text(encoding="utf-8").splitlines():
         if line.strip():
             yield line.split(" ", 1)[1]
+
+
+# ---------------------------------------------- data document (SPEC 13.8) ---
+class MaterializeError(Exception):
+    """A snapshot the materializer rejects, with its `error.data.path`."""
+
+    def __init__(self, path: str, reason: str):
+        super().__init__(f"{path}: {reason}")
+        self.path, self.reason = path, reason
+
+
+_INDEX_RE = re.compile(r"^(0|[1-9][0-9]*)$")
+
+
+def parse_pointer(text, path: str) -> list[str]:
+    """SPEC 13.8.2: an absolute RFC 6901 pointer within the fixed limits."""
+    if not isinstance(text, str):
+        raise MaterializeError(path, "pointer must be a string")
+    if len(text.encode("utf-8")) > MAX_POINTER_BYTES:
+        raise MaterializeError(
+            path, f"pointer exceeds max_pointer_bytes ({MAX_POINTER_BYTES})")
+    if text == "":
+        return []
+    if not text.startswith("/"):
+        raise MaterializeError(path, "pointer must be absolute (SPEC 13.8.2)")
+    tokens = text[1:].split("/")
+    if len(tokens) > MAX_POINTER_SEGMENTS:
+        raise MaterializeError(
+            path,
+            f"pointer exceeds max_pointer_segments ({MAX_POINTER_SEGMENTS})")
+    out = []
+    for token in tokens:
+        if re.search(r"~(?![01])", token):
+            raise MaterializeError(path, "invalid `~` escape in pointer")
+        out.append(token.replace("~1", "/").replace("~0", "~"))
+    return out
+
+
+def resolve_pointer(document, tokens: list[str], path: str):
+    """One container step per token; (True, value) or (False, None)."""
+    current = document
+    for token in tokens:
+        if isinstance(current, list):
+            if not _INDEX_RE.match(token):
+                raise MaterializeError(
+                    path, "array index must be a decimal without leading "
+                          "zeros (SPEC 13.8.2)")
+            index = int(token)
+            if index >= len(current):
+                return False, None
+            current = current[index]
+        elif isinstance(current, dict):
+            if token not in current:
+                return False, None
+            current = current[token]
+        else:
+            return False, None
+    return True, current
+
+
+def json_depth(value) -> int:
+    if isinstance(value, dict):
+        return 1 + max((json_depth(v) for v in value.values()), default=0)
+    if isinstance(value, list):
+        return 1 + max((json_depth(v) for v in value), default=0)
+    return 0
+
+
+def jcs_octets(value) -> int:
+    return len(json.dumps(value, sort_keys=True, separators=(",", ":"),
+                          ensure_ascii=False).encode("utf-8"))
+
+
+def _is_number(value) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) \
+        and math.isfinite(value)
+
+
+def _is_integral(value) -> bool:
+    return _is_number(value) and float(value) == int(value)
+
+
+def value_matches_tag(tag, value, node, member) -> bool:
+    """Whether a resolved value has the member's SPEC 17.1 type."""
+    if tag is None:
+        return True
+    if tag in ("string", "yyyy-mm", "yyyy-mm-dd", "hh-mm", "color"):
+        return isinstance(value, str)
+    if tag == "identifier":
+        return is_identifier(value)
+    if tag == "boolean":
+        return isinstance(value, bool)
+    if tag == "boolean-or-auto":
+        return isinstance(value, bool) or value == "auto"
+    if tag == "number":
+        return _is_number(value)
+    if tag == "dp":
+        return _is_number(value) and value >= 0
+    if tag == "positive-integer":
+        return _is_integral(value) and value > 0
+    if tag == "non-negative-integer":
+        return _is_integral(value) and value >= 0
+    if tag == "integer-1-12":
+        return _is_integral(value) and 1 <= value <= 12
+    if tag == "integer-1-31":
+        return _is_integral(value) and 1 <= value <= 31
+    if tag == "enum":
+        domain = ENUMS.get(f"{node}.{member}") or ENUMS.get(member) or []
+        return isinstance(value, str) and value in domain
+    if tag == "font-weight":
+        return value in ("normal", "bold") or (
+            _is_integral(value) and 100 <= value <= 900 and value % 100 == 0)
+    if tag in ("string-or-number", "option-value"):
+        return isinstance(value, str) or _is_number(value)
+    if tag == "option-value-or-array":
+        return isinstance(value, (str, list)) or _is_number(value)
+    if tag == "number-or-corner-object":
+        return _is_number(value) or isinstance(value, dict)
+    if tag == "two-number-array":
+        return isinstance(value, list) and len(value) == 2 and \
+            all(_is_number(v) for v in value)
+    if tag == "number-array":
+        return isinstance(value, list) and all(_is_number(v) for v in value)
+    if tag.endswith("-object"):
+        return isinstance(value, dict)
+    if tag.endswith("-array"):
+        return isinstance(value, list)
+    return True
+
+
+def unbindable_reason(node_type, member: str):
+    """SPEC 13.8.3: why `member` may not be bound on `node_type`, or None."""
+    if member in UNBINDABLE_MEMBERS:
+        return f"`{member}` MUST NOT be bound (SPEC 13.8.3)"
+    if member.startswith("on_"):
+        return f"`{member}` is an ActionDescriptor and MUST NOT be bound"
+    if node_type is None:
+        tag = FIELD_TYPES.get(member) if member in UNIVERSAL else None
+    elif member in node_members(node_type) or member in UNIVERSAL:
+        tag = resolve_member_type(node_type, member)
+    else:
+        return f"`{member}` is not a member of {node_type}"
+    if tag in UNBINDABLE_TAGS:
+        return f"`{member}` ({tag}) MUST NOT be bound (SPEC 13.8.3)"
+    return None
+
+
+def check_bind(node: dict, path: str, node_type, ctx: NodeDocument):
+    """The Bind object's shape and targets; resolution is materialize()."""
+    bind = node["bind"]
+    if not isinstance(bind, dict):
+        problem(f"{path}.bind: must be a Bind object (SPEC 13.8.3)")
+        return
+    for member, pointer in bind.items():
+        bpath = f"{path}.bind.{member}"
+        ctx.binding_count += 1
+        if ctx.binding_count == MAX_BINDINGS + 1:
+            problem(f"{bpath}: document exceeds max_bindings_per_snapshot "
+                    f"({MAX_BINDINGS})")
+        reason = unbindable_reason(node_type, member)
+        if reason:
+            problem(f"{bpath}: {reason}")
+        try:
+            parse_pointer(pointer, bpath)
+        except MaterializeError as error:
+            problem(f"{error.path}: {error.reason}")
+
+
+def find_bind(value, path: str):
+    """The path of the first node carrying `bind`, or None."""
+    if isinstance(value, list):
+        for i, child in enumerate(value):
+            found = find_bind(child, f"{path}[{i}]")
+            if found is not None:
+                return found
+        return None
+    if not isinstance(value, dict):
+        return None
+    if "t" in value and "bind" in value:
+        return f"{path}.bind"
+    for key, child in value.items():
+        if "t" in value and key in OPAQUE_NODE_WALK_MEMBERS:
+            continue
+        found = find_bind(child, f"{path}.{key}")
+        if found is not None:
+            return found
+    return None
+
+
+def materialize(spec, data, spec_path: str, data_path: str):
+    """SPEC 13.8.3: resolve every binding of `spec` against `data`.
+
+    Returns the materialized document (a copy; `bind` stays on each node)
+    or raises MaterializeError at the first rejection, in walk order."""
+    if not isinstance(data, dict):
+        raise MaterializeError(data_path, "data document must be an object")
+    if json_depth(data) > MAX_DATA_DEPTH:
+        raise MaterializeError(
+            data_path, f"exceeds max_data_depth ({MAX_DATA_DEPTH})")
+    if jcs_octets(data) > MAX_DATA_BYTES:
+        raise MaterializeError(
+            data_path, f"exceeds max_data_bytes ({MAX_DATA_BYTES})")
+    count = 0
+
+    def walk(value, path):
+        nonlocal count
+        if isinstance(value, list):
+            return [walk(v, f"{path}[{i}]") for i, v in enumerate(value)]
+        if not isinstance(value, dict):
+            return value
+        node_type = value.get("t") if "t" in value else None
+        out = {}
+        resolved = {}
+        if node_type is not None and "bind" in value:
+            bind = value["bind"]
+            if not isinstance(bind, dict):
+                raise MaterializeError(f"{path}.bind", "must be a Bind object")
+            known = node_type if isinstance(node_type, str) and \
+                node_type in NODE_TYPES else None
+            for member, pointer in bind.items():
+                bpath = f"{path}.bind.{member}"
+                count += 1
+                if count > MAX_BINDINGS:
+                    raise MaterializeError(
+                        bpath, "exceeds max_bindings_per_snapshot "
+                               f"({MAX_BINDINGS})")
+                reason = unbindable_reason(known, member)
+                if reason:
+                    raise MaterializeError(bpath, reason)
+                if member in value:
+                    raise MaterializeError(
+                        bpath, f"`{member}` is both authored and bound")
+                tokens = parse_pointer(pointer, bpath)
+                found, resolved_value = resolve_pointer(data, tokens, bpath)
+                if found:
+                    tag = resolve_member_type(known, member) if known \
+                        else FIELD_TYPES.get(member)
+                    if not value_matches_tag(tag, resolved_value, known,
+                                             member):
+                        raise MaterializeError(
+                            bpath, f"resolved value is not a {tag}")
+                    resolved[member] = resolved_value
+                elif known is not None and \
+                        member in NODE_SCHEMA[known]["required"]:
+                    raise MaterializeError(
+                        bpath, f"required `{member}` reaches nothing")
+        for key, child in value.items():
+            if node_type is not None and \
+                    (key == "bind" or key in OPAQUE_NODE_WALK_MEMBERS):
+                out[key] = child
+            else:
+                out[key] = walk(child, f"{path}.{key}")
+        out.update(resolved)
+        return out
+
+    return walk(spec, spec_path)
+
+
+def check_data_ops(params: dict, path: str):
+    """SPEC 13.8.4: the DataOp array of one `surface.data` request."""
+    revision = params.get("revision")
+    if not isinstance(revision, int) or isinstance(revision, bool) \
+            or revision < 0:
+        problem(f"{path}.revision: must be a non-negative integer")
+    ops = params.get("ops")
+    if not isinstance(ops, list) or not ops:
+        problem(f"{path}.ops: must be a non-empty array of DataOp")
+        return
+    if len(ops) > MAX_DATA_OPS:
+        problem(f"{path}.ops: exceeds max_data_ops ({MAX_DATA_OPS})")
+    shapes = DATA_SCHEMA.get("ops", {})
+    for i, op in enumerate(ops):
+        opath = f"{path}.ops[{i}]"
+        if not isinstance(op, dict):
+            problem(f"{opath}: DataOp must be an object")
+            continue
+        kind = op.get("op")
+        shape = shapes.get(kind) if isinstance(kind, str) else None
+        if shape is None:
+            problem(f"{opath}.op: must be `set` or `remove`")
+            continue
+        allowed = set(shape["required"]) | set(shape["optional"])
+        for member in shape["required"]:
+            if member not in op:
+                problem(f"{opath}: {kind} requires `{member}`")
+        for member in op:
+            if member not in allowed:
+                problem(f"{opath}.{member}: unknown DataOp member")
+        try:
+            tokens = parse_pointer(op.get("path"), f"{opath}.path")
+        except MaterializeError as error:
+            problem(f"{error.path}: {error.reason}")
+            continue
+        if not tokens:
+            if kind != "set" or not isinstance(op.get("value"), dict):
+                problem(f"{opath}.path: the empty pointer is admitted only "
+                        "for a `set` whose value is an object")
+
+
+def check_data_vectors() -> int:
+    """goldens/data.golden: {spec, data, expect} known answers (SPEC 24.5)."""
+    vectors = 0
+    for n, line in enumerate(golden_lines("data.golden")):
+        vector = json.loads(line)
+        vpath = f"data:{n:02d}"
+        expect = vector.get("expect", {})
+        saved, found, failure, materialized = problems[:], [], None, None
+        del problems[:]
+        try:
+            try:
+                materialized = materialize(vector.get("spec"),
+                                           vector.get("data"), "spec", "data")
+                if isinstance(materialized, dict) and \
+                        "views" in materialized:
+                    check_node_documents([
+                        (view, f"spec.views.{name}")
+                        for name, view in materialized["views"].items()
+                    ])
+                else:
+                    check_node(materialized, "spec")
+                found = problems[:]
+            except MaterializeError as error:
+                found, failure = [f"{error.path}: {error.reason}"], error.path
+        finally:
+            del problems[:]
+            problems.extend(saved)
+        if "materialized" in expect:
+            if found:
+                problem(f"{vpath}: expected a materialized document, got "
+                        f"{found}")
+            elif materialized != expect["materialized"]:
+                problem(f"{vpath}: the materialized document differs from "
+                        f"the known answer: {json.dumps(materialized, sort_keys=True)}")
+        elif "reject" in expect:
+            first = failure or (found[0].split(": ", 1)[0] if found else None)
+            if first != expect["reject"]:
+                problem(f"{vpath}: expected rejection at `{expect['reject']}`"
+                        f", got {first!r} ({found})")
+        else:
+            problem(f"{vpath}: expect must carry `materialized` or `reject`")
+        vectors += 1
+    return vectors
 
 
 # ------------------------------------------------- wire framing reference ---
@@ -2171,6 +2581,7 @@ def main() -> int:
     editor = check_editor()
     semantics = check_semantics_goldens()
     text_inputs = check_text_input_goldens()
+    data_vectors = check_data_vectors()
 
     # Coverage floors: the corpus really covers the vocabulary.
     covered = {json.loads(line).get("t")
@@ -2194,7 +2605,8 @@ def main() -> int:
           f"{widget_surfaces} widget surfaces, {hyper} hypertext "
           f"nodes, {wire} wire fixtures x3 chunkings, "
           f"{editor} editor splice cases, {semantics} semantics witnesses, "
-          f"{text_inputs} text-input witnesses validate "
+          f"{text_inputs} text-input witnesses, {data_vectors} data "
+          f"vectors validate "
           f"(spec {contract['spec_version']}, "
           f"format {contract['contract_format']}); "
           f"SPEC §8/§11 in sync; 9.3 KAT reproduced")

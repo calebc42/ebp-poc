@@ -85,7 +85,8 @@
     "alpha",
     "clip",
     "align_self",
-    "semantics"
+    "semantics",
+    "bind"
   ],
   "semantics_schema": {
     "required": [],
@@ -1090,6 +1091,7 @@
     "id": "identifier",
     "key": "identifier",
     "semantics": "semantics-object",
+    "bind": "bind-object",
     "document": "identifier",
     "keyboard": "enum",
     "children": "node-array",
@@ -1949,6 +1951,39 @@
         1201
       ]
     },
+    "surface.data": {
+      "sender": "emacs",
+      "class": "request",
+      "states": [
+        "SYNCING",
+        "READY"
+      ],
+      "capability": "data.model",
+      "params": {
+        "required": [
+          "surface",
+          "revision",
+          "ops"
+        ],
+        "optional": []
+      },
+      "result": {
+        "required": [
+          "status",
+          "revision",
+          "present"
+        ],
+        "optional": []
+      },
+      "result_status": [
+        "applied",
+        "stale"
+      ],
+      "errors": [
+        1201,
+        -32602
+      ]
+    },
     "session.superseded": {
       "sender": "companion",
       "class": "notification",
@@ -1980,7 +2015,8 @@
           "stale_after_s",
           "stale_spec",
           "current_view",
-          "reset_input_ids"
+          "reset_input_ids",
+          "data"
         ]
       },
       "result": {
@@ -2731,7 +2767,13 @@
       "max_request_id_bytes": 64,
       "max_method_bytes": 128,
       "max_send_header_bytes": 128,
-      "max_node_depth": 20
+      "max_node_depth": 20,
+      "max_data_bytes": 1048576,
+      "max_data_depth": 32,
+      "max_pointer_bytes": 512,
+      "max_pointer_segments": 32,
+      "max_bindings_per_snapshot": 10000,
+      "max_data_ops": 1000
     },
     "welcome": {
       "max_frame_bytes": {
@@ -2840,7 +2882,8 @@
     "editor.sync",
     "capabilities",
     "triggers",
-    "offline.wake"
+    "offline.wake",
+    "data.model"
   ],
   "device_capabilities": [
     "settings.open",
@@ -3159,6 +3202,65 @@
         "color"
       ]
     }
+  },
+  "data_model_schema": {
+    "capability": "data.model",
+    "pointer": {
+      "rfc": 6901,
+      "absolute_only": true,
+      "max_bytes_limit": "max_pointer_bytes",
+      "max_segments_limit": "max_pointer_segments"
+    },
+    "ops": {
+      "set": {
+        "required": [
+          "op",
+          "path",
+          "value"
+        ],
+        "optional": []
+      },
+      "remove": {
+        "required": [
+          "op",
+          "path"
+        ],
+        "optional": []
+      },
+      "max_ops_limit": "max_data_ops"
+    },
+    "unbindable_members": [
+      "t",
+      "id",
+      "key",
+      "children",
+      "bind",
+      "template",
+      "args",
+      "meta",
+      "semantics",
+      "variants",
+      "swipe_start",
+      "swipe_end"
+    ],
+    "unbindable_tags": [
+      "action-descriptor",
+      "node",
+      "node-array",
+      "variant-array",
+      "swipe-object",
+      "semantics-object",
+      "menu-item-array",
+      "menu-group-array",
+      "tab-item-array",
+      "rail-item-array",
+      "button-group-item-array",
+      "label-on-tap-object",
+      "toolbar-id-or-item-array",
+      "canvas-op-array",
+      "table-row-array",
+      "rich-span-array"
+    ]
   },
   "surface_spec_variants": {
     "widget": {

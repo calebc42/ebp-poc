@@ -189,7 +189,7 @@ Companion domain:
 | Artifact | Committed | Crash rule | Cleared by |
 |---|---|---|---|
 | Pairing token and pairing identity (Section 9.1) | at pairing completion, before the first authenticated session | atomic; a partial pairing is no pairing | revocation or re-pairing |
-| Surface cache — latest accepted snapshot per present surface (Section 13.5) | before returning `applied` (Section 13.2) | atomic with the revision floor; persist-and-present is one transition | tombstone at a higher revision; revocation |
+| Surface cache — latest accepted snapshot per present surface, with its data document and authored tree under `data.model` (Sections 13.5, 13.8) | before returning `applied` (Section 13.2) | atomic with the revision floor; persist-and-present is one transition | tombstone at a higher revision; revocation |
 | Revision floors and tombstones (Sections 13.2–13.3) | with the accepting result | monotonic; MUST NOT regress after restart | revocation only; a tombstone outlives its surface |
 | Input drafts — latest non-password value per surface and node (Sections 13.6, 14.6) | no later than any event admitted from the same interaction (Section 15.1) | repeatable last-writer; never partial per value | the clearing boundaries of Section 24.6 item 17: acknowledgement, reset, removal, type change, tombstone, revocation |
 | Durable event queue, including captured fields (Section 15.1) | before any wake or delivery attempt | admission, dedupe replacement, and counter advance are one transaction (Section 15.2); deletion only after a permanent result (Section 15.3) | permanent result; expiry; revocation |
@@ -350,6 +350,10 @@ A receiver MUST enforce all of the following limits:
 | Method name | 128 UTF-8 octets and the Section 4.4 ASCII grammar |
 | Header section a sender may rely on | 128 octets |
 | Node nesting depth in one surface, dialog, or notification document | 20 levels |
+| Surface data document (Section 13.8) | 1,048,576 UTF-8 octets of its JCS form; 32 nested containers |
+| JSON Pointer in a binding or a DataOp (Section 13.8.2) | 512 UTF-8 octets; 32 reference tokens |
+| Bindings in one surface snapshot (Section 13.8.3) | 10,000 |
+| Operations in one `surface.data` request (Section 13.8.4) | 1,000 |
 
 A `variant_host` MUST contain at least two and at most eight alternatives. Its
 host node, every `Variant.content` root, and every descendant in every selected
@@ -1697,6 +1701,7 @@ means `READY`.
 | `surface.update` | Emacs | request | S, R | core / surface capability | 13 |
 | `surface.remove` | Emacs | request | S, R | core for reported surfaces | 13 |
 | `surface.release` | Emacs | request | R | core | 13.1 |
+| `surface.data` | Emacs | request | S, R | `data.model` | 13.8 |
 | `queue.replay` | Emacs | request | S, R | core | 15 |
 | `event.action` | Companion | request | S, R | core | 14–15 |
 | `state.changed` | Companion | notification | R | core | 14 |
@@ -1849,11 +1854,17 @@ everything not explicitly released keeps the retention rules above.
 | `stale_spec` | SurfaceSpec | no | Whole replacement shown after staleness begins |
 | `current_view` | identifier | no | Explicit multi-view navigation request |
 | `reset_input_ids` | array of widget IDs | no | Locally dirty inputs that Emacs explicitly replaces |
+| `data` | object | no | The surface data document (Section 13.8); requires `data.model` |
 
 `reset_input_ids` values MUST be distinct and MUST name non-password stateful
 nodes in the submitted `spec`; another value makes the request invalid. An
 `editor` with `document` MUST NOT appear in `reset_input_ids`, even when
 `publish_state` is true; its text can change only through Section 19.
+
+`data` MAY appear only when `data.model` was granted (Section 13.8); an absent
+`data` is the empty document. Bindings in `spec` are resolved against it before
+the request is validated, so the atomic replacement below covers the tree, the
+document, and the materialized snapshot together.
 
 The Companion MUST validate the entire request before changing persistent or
 visible state. If the content is invalid, it MUST return
@@ -2026,7 +2037,8 @@ inside `stale_spec` remain governed by their own offline policies and the
 event's `revision_seen`.
 
 `stale_spec` MUST NOT contain a stateful node or any `editor`, regardless of
-`publish_state` or `document`. The accepted primary `spec`
+`publish_state` or `document`, and MUST NOT carry `bind` on any node (Section
+13.8.1). The accepted primary `spec`
 remains the sole schema and storage owner for `(surface, id)` drafts while the
 stale presentation is visible. This prevents an alternate document from
 retyping or aliasing cached input state.
@@ -2054,6 +2066,12 @@ The Companion MUST clear a dirty value when any of these occurs:
 These four conditions are the only circumstances in which a compatible dirty
 value is cleared; a snapshot that merely carries a different authored value does
 not overwrite the draft.
+
+Under `data.model` (Section 13.8) the authored value compared here is the
+materialized one. A `surface.data` patch that writes a node's published value
+into the document at its bound pointer therefore acknowledges the draft exactly
+as a snapshot carrying the same value does, and a patch that writes a different
+value leaves the draft in place.
 
 Value-schema compatibility is exact:
 
@@ -2112,6 +2130,142 @@ when the selected body contains no non-empty text, presentable icon, or admitted
 interactive descendant according to the widget profile. A tile
 spec carries neither `header_action` nor `empty`; those are notification and
 widget concepts.
+
+### 13.8 Surface data document (`data.model`)
+
+Under the `data.model` capability (Section 22.1) a surface snapshot MAY carry a
+**data document**: one JSON object, authored by Emacs beside the node tree,
+from which node members are resolved by JSON Pointer. The document is
+application data and remains Emacs's (Section 3, invariant 1). The Companion
+holds a copy for exactly one purpose — resolving the bindings of Section
+13.8.3 — and MUST NOT otherwise read, derive from, transform, or expose it.
+
+#### 13.8.1 The document
+
+`surface.update` carries the document in `data` (Section 13.2). It is a JSON
+object of at most `max_data_bytes` UTF-8 octets in its JCS form (Section 4.5)
+and at most `max_data_depth` nested containers; an absent `data` is the empty
+object. The document is part of the complete snapshot: `surface.update`
+replaces it whole, the Companion persists and presents it atomically with the
+snapshot at that revision, and it shares the surface's revision floor,
+tombstone, cache, stale and restore rules (Sections 13.1, 13.5). `stale_spec`
+has no document and MUST NOT carry `bind`.
+
+#### 13.8.2 Pointers
+
+A pointer is an RFC 6901 JSON Pointer in its string form: the empty string
+names the whole document; every other pointer begins with `/`; reference
+tokens are separated by `/` and escape `~` as `~0` and `/` as `~1`. A token
+applied to an array MUST be a decimal index without leading zeros, and the
+token `-` is not admitted against an array. A pointer MUST NOT exceed
+`max_pointer_bytes` UTF-8 octets or `max_pointer_segments` reference tokens.
+Pointers are absolute: a non-empty pointer that does not begin with `/` is
+content-invalid. A pointer that names no value "reaches nothing".
+
+Evaluating a pointer is a bounded exact lookup — one container step per
+reference token over the Companion's copy of the document — that performs no
+ambient I/O and no interpretation of the tokens or of the values they reach.
+A pointer is inert data in the sense of Section 23.2: not a command,
+expression, predicate, pattern, query, resource address, or application-state
+key that the host evaluates. Its evaluation cost is bounded by its token count
+independently of the document's size (Section 23.5), and a Companion MUST NOT
+retain any table keyed by pointer text beyond the bindings of the accepted
+snapshot itself.
+
+#### 13.8.3 `bind`
+
+`bind` is a universal node attribute (Section 16.5): an object whose keys are
+member names of the node it appears on and whose values are pointers. A
+member named in `bind` MUST NOT also be authored on the node. Materialization
+— the step at which the Companion resolves a snapshot — replaces each bound
+member with the JSON value its pointer reaches, or omits the member when the
+pointer reaches nothing. The materialized document is then validated exactly
+as an unbound one: a bound member whose resolved value violates the member's
+type, or a required member whose pointer reaches nothing, is content-invalid
+at the path `<node>.bind.<member>`, and the whole request is rejected as
+Section 13.2 requires. `bind` itself remains on the materialized node; a
+receiver treats it as the universal attribute it is.
+
+The following MUST NOT be bound, and a `bind` naming one of them is
+content-invalid: `t`, `id`, `key`, `children`, `bind`, `template`, `args`,
+`meta`, `semantics`, `variants`, `swipe_start`, `swipe_end`, every member that
+Section 17.1 types as an ActionDescriptor, and every member typed as a Node,
+an array of Nodes, or an object or array that may itself contain a Node or an
+ActionDescriptor (`contract.json` `data_model_schema` projects the closed list
+of such types). Identity, retained presentation, and dispatch therefore stay
+authored. Every other member of the node's Section 17 row and every other
+Section 16.5 universal attribute MAY be bound, including the `value` of a
+stateful node. A member name that is neither such a row member nor a universal
+attribute is content-invalid in `bind`. A snapshot MUST NOT carry more than
+`max_bindings_per_snapshot` bindings, counted over every root, every
+multi-view entry, and every `variant_host` alternative.
+
+Materialization precedes every other admission step: pointer syntax and the
+bindable-member rule are checked, bindings are resolved, the materialized
+document is validated (Sections 13.2, 16, 17), its stateful nodes are
+extracted, drafts are reconciled against the materialized authored values
+(Section 13.6), and only then is the snapshot persisted and presented. Every
+reader of a presented snapshot — presentation, `capture_fields` (Section
+14.1), `input_state`, widgets, and tiles — reads the materialized document.
+The Companion MUST retain the authored tree, the document, and the
+materialized document together as one durable artifact (Section 3.2) and MUST
+re-materialize and re-validate on restore (Section 13.1).
+
+A Companion that was not granted `data.model` MUST reject `data` and `bind` as
+content-invalid, and a sender MUST omit both, together with `surface.data`,
+when the capability is absent (Section 12 rule 3).
+
+#### 13.8.4 `surface.data`
+
+`surface.data` replaces values in a present surface's document without
+resending its tree. Its params are:
+
+| Member | Type | Required | Meaning |
+|---|---|---:|---|
+| `surface` | Surface ID | yes | Target surface; MUST hold a present snapshot |
+| `revision` | non-negative integer | yes | Revision of this mutation, in the surface's ordinary revision space |
+| `ops` | array of DataOp | yes | One through `max_data_ops` operations, applied in order |
+
+A DataOp is `{"op":"set","path":<pointer>,"value":<any JSON>}` or
+`{"op":"remove","path":<pointer>}`, with no other member. `set` replaces the
+value the pointer reaches, or creates it when the final token names an absent
+object member or the index equal to an array's length; the parent container
+MUST exist. `remove` deletes the value the pointer reaches, which MUST exist;
+removing an array element shifts the elements after it. The empty pointer is
+admitted only for `set`, whose `value` MUST then be an object: it replaces the
+whole document.
+
+The Companion MUST validate the entire request — every pointer, the resulting
+document against Section 13.8.1, and the re-materialized snapshot against
+Sections 13.2, 16, and 17 — before changing persistent or visible state,
+applying every operation or none. Failure is `1201 content-invalid` with
+`error.data.path` naming the operation (for example `params.ops[3].path`) or
+the materialized node member. A surface whose latest record is a tombstone, or
+that the Companion has never seen, is content-invalid: there is nothing to
+patch. `revision` is governed by Section 13.2 unchanged: above the floor the
+Companion persists the new document and the re-materialized snapshot
+atomically and returns `applied`; at or below it, `stale`. An applied result
+is a floor-absorption point and a `state.changed` barrier exactly as an
+applied `surface.update`, and the new revision is the one later
+`revision_seen` values name.
+
+A patch never changes the authored tree, the current view, `stale_spec`, or
+any draft except as Section 13.6 provides.
+
+> Informative: the document is Emacs's. An input bound to `/form/title` still
+> publishes `state.changed` keyed by its `id`; Emacs writes the value back with
+> `surface.data`, and Section 13.6 acknowledges the draft without any
+> Companion-side interpretation. A later capability may let the Companion write
+> an input's value into its own copy at the bound pointer, so that other nodes
+> bound to the same pointer update before Emacs replies — the write-back of
+> A2UI-style data binding. That needs rules for reconciling such writes against
+> racing patches and a Section 3.1 durable-domain change, and is deliberately
+> not part of `data.model`.
+
+> Informative: `slop-docs/W-REGISTER.md` W2 keeps view definitions, queries,
+> and transforms out of the wire, and this section does not reopen that
+> ruling: a document is plain data and a pointer is a lookup, so nothing here
+> lets the Companion compute, filter, or derive.
 
 ## 14. Actions and input state
 
@@ -2468,6 +2622,10 @@ fact; the field records what the user actually saw.
 present. A button without `checked` remains a stateless action node. Widget IDs
 MUST be unique among stateful nodes in one surface snapshot. A Companion MUST
 send state changes in user-observed order while `READY`.
+
+Under `data.model`, `revision_seen` names the revision of the materialized
+snapshot the user saw, whether a `surface.update` or a `surface.data`
+produced it (Section 13.8.4).
 
 A `text_input` MUST publish after each user edit, subject to a debounce no
 longer than 500 milliseconds.
@@ -2871,10 +3029,13 @@ density-independent units (`dp`) unless stated otherwise.
 | `clip` | boolean | `false` | Clip descendants to the corner shape |
 | `align_self` | `start` \| `center` \| `end` \| `stretch` | — | Override parent cross-axis alignment |
 | `semantics` | Semantics object | — | Optional toolkit-neutral accessibility metadata and bounded custom actions (§16.5.1) |
+| `bind` | Bind object | — | Member-to-pointer bindings resolved from the surface data document (§13.8.3); admitted only under `data.model` |
 
 A Pad object MAY contain `start`, `top`, `end`, `bottom`, `horizontal`, and
 `vertical`. A side-specific value wins over its axis shorthand. A Corner object
-MAY contain `top_start`, `top_end`, `bottom_start`, and `bottom_end`.
+MAY contain `top_start`, `top_end`, `bottom_start`, and `bottom_end`. A Bind
+object maps member names to JSON Pointers into the surface data document;
+Section 13.8.3 defines which members MAY be bound.
 
 The Companion SHOULD apply visual operations in this order: corner shape,
 clipping, background, then border.
@@ -2983,6 +3144,9 @@ Where a table lists a member without an inline type, these common types or the
 member-specific prose immediately after the table supplies its type. These
 definitions are cumulative and MUST be projected together into `contract.json`;
 a receiver MUST NOT apply type coercion omitted by them.
+
+`bind` is a Bind object; every pointer inside it, and every `path` of a
+Section 13.8.4 DataOp, is a `json-pointer` (Section 13.8.2).
 
 A member whose type depends on its node — `items`, `selected`, `fill`,
 `size`, and `value` — is projected under a `node.member` key in
@@ -5031,6 +5195,7 @@ This document defines these session capability names:
 | `capabilities` | `capability.invoke` and `device.caps` |
 | `triggers` | `triggers.set`, trigger reports, and predicate reports |
 | `offline.wake` | The Companion can attempt the `wake` offline policy |
+| `data.model` | Section 13.8: the surface data document, `bind`, and `surface.data` |
 
 Core session, `app:*` surfaces, state reporting, durable replay, and the Core
 Node Set are not negotiated capabilities. A Companion claiming EBP core
@@ -5481,6 +5646,11 @@ encoder conformance test MUST verify the exact framing syntax and byte count,
 then compare the parsed JSON body semantically. It MUST NOT require arbitrary
 JSON object-member order or escaping choices unless canonical JSON is added as
 a separate normative rule.
+
+`goldens/data.golden` is the materialization corpus for Section 13.8: JSON-line
+known-answer vectors, each a `spec`, a `data` document, and either the exact
+materialized document or the `error.data.path` at which the snapshot is
+rejected. A Companion claiming `data.model` MUST reproduce every vector.
 
 ### 24.6 Required adversarial tests
 
