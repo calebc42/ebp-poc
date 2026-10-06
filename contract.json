@@ -1294,6 +1294,7 @@
     "dropdown.value": "option-value",
     "segmented_button.value": "option-value-or-array",
     "scaffold.floating_toolbar_fab": "node",
+    "date_stamp.month": "string",
     "pad": "pad-object",
     "min_width": "number",
     "max_width": "number",
@@ -1693,6 +1694,8 @@
       "on_month_change",
       "on_point_tap",
       "on_trigger",
+      "on_search",
+      "on_action",
       "header_action"
     ],
     "descriptor_fields": [

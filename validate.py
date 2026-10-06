@@ -408,6 +408,14 @@ def check_field_type_projection():
         if attr not in FIELD_TYPES and attr not in ENUMS:
             problem(f"contract.json: universal attribute `{attr}` has no "
                     "field type")
+    # Amendment #193: §17.1 makes every `on_` member an ActionDescriptor, and
+    # the validators walk descriptors only under the registered hook keys, so
+    # an unregistered hook is an unvalidated descriptor.
+    for node in NODE_SCHEMA:
+        for member in node_members(node):
+            if member.startswith("on_") and member not in HOOK_KEYS:
+                problem(f"contract.json: `{node}.{member}` is an action hook "
+                        "missing from actions.hook_keys")
     for key in ENUMS:
         if "." not in key or key in NON_NODE_ENUM_DOMAINS:
             continue
