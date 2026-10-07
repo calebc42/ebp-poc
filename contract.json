@@ -86,7 +86,8 @@
     "clip",
     "align_self",
     "semantics",
-    "bind"
+    "bind",
+    "template"
   ],
   "semantics_schema": {
     "required": [],
@@ -1092,6 +1093,7 @@
     "key": "identifier",
     "semantics": "semantics-object",
     "bind": "bind-object",
+    "template": "node",
     "document": "identifier",
     "keyboard": "enum",
     "children": "node-array",
@@ -1839,6 +1841,11 @@
       "on_point_tap": [
         "value",
         "index"
+      ]
+    },
+    "scope_injections": {
+      "template_item": [
+        "item"
       ]
     },
     "open_surface_feature": "action.open_surface"
@@ -2773,7 +2780,8 @@
       "max_pointer_bytes": 512,
       "max_pointer_segments": 32,
       "max_bindings_per_snapshot": 10000,
-      "max_data_ops": 1000
+      "max_data_ops": 1000,
+      "max_template_items": 10000
     },
     "welcome": {
       "max_frame_bytes": {
@@ -3072,7 +3080,8 @@
     "image.data",
     "toolbar.*",
     "editor.candidate_kind",
-    "action.open_surface"
+    "action.open_surface",
+    "data.template"
   ],
   "candidate_schema": {
     "required": [
@@ -3207,7 +3216,8 @@
     "capability": "data.model",
     "pointer": {
       "rfc": 6901,
-      "absolute_only": true,
+      "absolute_outside_template": true,
+      "relative_inside_template": true,
       "max_bytes_limit": "max_pointer_bytes",
       "max_segments_limit": "max_pointer_segments"
     },
@@ -3260,7 +3270,38 @@
       "canvas-op-array",
       "table-row-array",
       "rich-span-array"
-    ]
+    ],
+    "template": {
+      "feature": "data.template",
+      "attribute": "template",
+      "children_binding": "children",
+      "max_items_limit": "max_template_items",
+      "max_nesting": 4,
+      "root_must_bind": [
+        "key"
+      ],
+      "root_forbidden_members": [
+        "key",
+        "id"
+      ],
+      "forbidden_inside": {
+        "members": [
+          "id"
+        ],
+        "descriptor_members": [
+          "capture_fields"
+        ],
+        "node_types": [
+          "editor",
+          "variant_host"
+        ],
+        "stateful": true
+      },
+      "injection": "item",
+      "admitted_in": [
+        "app"
+      ]
+    }
   },
   "surface_spec_variants": {
     "widget": {

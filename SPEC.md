@@ -354,6 +354,7 @@ A receiver MUST enforce all of the following limits:
 | JSON Pointer in a binding or a DataOp (Section 13.8.2) | 512 UTF-8 octets; 32 reference tokens |
 | Bindings in one surface snapshot (Section 13.8.3) | 10,000 |
 | Operations in one `surface.data` request (Section 13.8.4) | 1,000 |
+| Elements expanded from one template (Section 13.8.5) | 10,000 |
 
 A `variant_host` MUST contain at least two and at most eight alternatives. Its
 host node, every `Variant.content` root, and every descendant in every selected
@@ -2037,8 +2038,8 @@ inside `stale_spec` remain governed by their own offline policies and the
 event's `revision_seen`.
 
 `stale_spec` MUST NOT contain a stateful node or any `editor`, regardless of
-`publish_state` or `document`, and MUST NOT carry `bind` on any node (Section
-13.8.1). The accepted primary `spec`
+`publish_state` or `document`, and MUST NOT carry `bind` or `template` on any
+node (Sections 13.8.1, 13.8.5). The accepted primary `spec`
 remains the sole schema and storage owner for `(surface, id)` drafts while the
 stale presentation is visible. This prevents an alternate document from
 retyping or aliasing cached input state.
@@ -2149,7 +2150,7 @@ object. The document is part of the complete snapshot: `surface.update`
 replaces it whole, the Companion persists and presents it atomically with the
 snapshot at that revision, and it shares the surface's revision floor,
 tombstone, cache, stale and restore rules (Sections 13.1, 13.5). `stale_spec`
-has no document and MUST NOT carry `bind`.
+has no document and MUST NOT carry `bind` or `template`.
 
 #### 13.8.2 Pointers
 
@@ -2159,8 +2160,11 @@ tokens are separated by `/` and escape `~` as `~0` and `/` as `~1`. A token
 applied to an array MUST be a decimal index without leading zeros, and the
 token `-` is not admitted against an array. A pointer MUST NOT exceed
 `max_pointer_bytes` UTF-8 octets or `max_pointer_segments` reference tokens.
-Pointers are absolute: a non-empty pointer that does not begin with `/` is
-content-invalid. A pointer that names no value "reaches nothing".
+Outside a template item scope pointers are absolute: a non-empty pointer that
+does not begin with `/` is content-invalid. Inside an item scope (Section
+13.8.5) a pointer that does not begin with `/`, the empty pointer included, is
+relative to the scope's element. A pointer that names no value "reaches
+nothing".
 
 Evaluating a pointer is a bounded exact lookup — one container step per
 reference token over the Companion's copy of the document — that performs no
@@ -2187,8 +2191,10 @@ Section 13.2 requires. `bind` itself remains on the materialized node; a
 receiver treats it as the universal attribute it is.
 
 The following MUST NOT be bound, and a `bind` naming one of them is
-content-invalid: `t`, `id`, `key`, `children`, `bind`, `template`, `args`,
-`meta`, `semantics`, `variants`, `swipe_start`, `swipe_end`, every member that
+content-invalid: `t`, `id`, `key` and `children` (except that Section 13.8.5
+requires `key` bound on a template node and admits `children` bound beside
+one), `bind`, `template`, `args`, `meta`, `semantics`, `variants`,
+`swipe_start`, `swipe_end`, every member that
 Section 17.1 types as an ActionDescriptor, and every member typed as a Node,
 an array of Nodes, or an object or array that may itself contain a Node or an
 ActionDescriptor (`contract.json` `data_model_schema` projects the closed list
@@ -2266,6 +2272,69 @@ any draft except as Section 13.6 provides.
 > and transforms out of the wire, and this section does not reopen that
 > ruling: a document is plain data and a pointer is a lookup, so nothing here
 > lets the Companion compute, filter, or derive.
+
+#### 13.8.5 Templates (`data.template`)
+
+A node MAY carry the universal attribute `template` (Section 16.5): one Node
+that the Companion expands once per element of a bound array. `template` is
+admitted only beside a `bind` that names `children`, and `bind` MAY name
+`children` only beside `template`; a node carrying `template` MUST NOT author
+`children`. Beyond the `data.model` capability both are member-gated by the
+`data.template` feature (Section 22.4): when the target profile does not
+advertise it, the sender MUST expand the template itself and send literal
+`children`.
+
+Expansion is part of materialization (Section 13.8.3). The `children` pointer
+MUST reach an array, else the snapshot is content-invalid at
+`<node>.bind.children`; a pointer that reaches nothing is treated as an empty
+array unless the node's row requires `children`, in which case it is
+content-invalid at that same path. The array MUST NOT exceed
+`max_template_items` elements (Section 4.5). For each element in order the
+Companion materializes one copy of the template node in an **item scope**
+whose element is that value and appends the copy to the node's `children`.
+The expanded node keeps `bind` and `template`, and every copy keeps its own
+`bind`, as the universal attributes they are.
+
+Inside an item scope a pointer that begins with `/` is absolute and resolves
+against the document as Section 13.8.2 defines; every other pointer, the
+empty pointer included, is relative and resolves from the scope's element with
+the same token grammar and limits, so the empty pointer names the element
+itself and `title` names its member `title`. A template nested within a
+template opens an inner scope that shadows the outer one for relative
+pointers; the inner node's own `children` pointer resolves in the outer scope.
+Scopes MUST NOT nest deeper than four.
+
+Identity is bound, never positional. The template node MUST bind `key` — the
+one place where Section 13.8.3's rule against binding `key` is relaxed — and
+the resolved value is subject to Section 16.1 unchanged: an identifier, unique
+among the expanded siblings. The template node MUST NOT author `key` or `id`,
+and no node within a template MAY carry `id`, since `id` is document-unique
+and the copy repeats; descendants of the template node MAY author `key`. A
+template MUST NOT contain a Section 14.6 stateful node, an `editor`, a
+`variant_host`, or an ActionDescriptor carrying `capture_fields`, and no
+descriptor within it MAY author `args.item` (Section 14.3). A violation is
+content-invalid at the offending member of the authored template (for example
+`<node>.template.key`, `<node>.template.children[1].id`); a member of one
+copy whose pointer resolves wrongly is reported at that copy's path (for
+example `<node>.children[3].bind.text`).
+
+Every expanded copy is validated as an ordinary subtree: the copies count
+toward `max_nodes_per_snapshot`, `max_children_per_node`, `max_node_depth`
+and the widget lazy-item limits, and every copy's bindings count toward
+`max_bindings_per_snapshot`. When the array is empty the template is checked
+once against this section, the pointer grammar and the bindable-member rule;
+the types of its relatively bound members are checked only once an element
+exists, so a required bound member does not reject an empty list.
+
+`template` is admitted in app surface snapshots only: the single root, every
+`views` entry, and every `variant_host` alternative. `stale_spec`, widget
+bodies, tile specifications, dialog and notification documents MUST NOT carry
+it.
+
+Because every `surface.data` re-materializes the expansion, replacing or
+editing the bound array inserts, removes and reorders rows at an ordinary new
+revision without resending the tree, and each row's retained presentation
+follows its `key` (Section 16.1).
 
 ## 14. Actions and input state
 
@@ -2469,8 +2538,16 @@ is invalid.
 | `on_day_tap` | `value` as `YYYY-MM-DD` |
 | `on_month_change` | `value` as `YYYY-MM` |
 | `on_point_tap` | `value` as the authored point object and `index` as that point's zero-based ordinal index in the first series |
+| every hook on a node within a template item (Section 13.8.5) | `item`, in addition to the hook's own members |
 
 Hooks without an entry in this table inject nothing.
+
+`item` is the materialized `key` of the innermost template item (Section
+13.8.5) containing the node whose hook fired. It is injected on every remote
+descriptor dispatched from such a node, whatever the hook, and never on a
+node outside a template; an authored `args.item` within a template is
+content-invalid. `item` names a row of the bound array by its key, not its
+index, so it survives the re-expansion a `surface.data` causes.
 
 `from`, `to`, and `index` are non-negative zero-based integers. For
 `on_reorder`, `from` is the item's index before the move and `to` is that same
@@ -3030,12 +3107,14 @@ density-independent units (`dp`) unless stated otherwise.
 | `align_self` | `start` \| `center` \| `end` \| `stretch` | — | Override parent cross-axis alignment |
 | `semantics` | Semantics object | — | Optional toolkit-neutral accessibility metadata and bounded custom actions (§16.5.1) |
 | `bind` | Bind object | — | Member-to-pointer bindings resolved from the surface data document (§13.8.3); admitted only under `data.model` |
+| `template` | Node | — | The node expanded once per element of the array bound as `children` (§13.8.5); admitted only under `data.model` with the `data.template` feature |
 
 A Pad object MAY contain `start`, `top`, `end`, `bottom`, `horizontal`, and
 `vertical`. A side-specific value wins over its axis shorthand. A Corner object
 MAY contain `top_start`, `top_end`, `bottom_start`, and `bottom_end`. A Bind
 object maps member names to JSON Pointers into the surface data document;
-Section 13.8.3 defines which members MAY be bound.
+Section 13.8.3 defines which members MAY be bound. A `template` is one Node;
+Section 13.8.5 defines where it is admitted and how it expands.
 
 The Companion SHOULD apply visual operations in this order: corner shape,
 clipping, background, then border.
@@ -3146,7 +3225,8 @@ definitions are cumulative and MUST be projected together into `contract.json`;
 a receiver MUST NOT apply type coercion omitted by them.
 
 `bind` is a Bind object; every pointer inside it, and every `path` of a
-Section 13.8.4 DataOp, is a `json-pointer` (Section 13.8.2).
+Section 13.8.4 DataOp, is a `json-pointer` (Section 13.8.2). `template` is a
+Node (Section 13.8.5).
 
 A member whose type depends on its node — `items`, `selected`, `fill`,
 `size`, and `value` — is projected under a `node.member` key in
@@ -5195,7 +5275,7 @@ This document defines these session capability names:
 | `capabilities` | `capability.invoke` and `device.caps` |
 | `triggers` | `triggers.set`, trigger reports, and predicate reports |
 | `offline.wake` | The Companion can attempt the `wake` offline policy |
-| `data.model` | Section 13.8: the surface data document, `bind`, and `surface.data` |
+| `data.model` | Section 13.8: the surface data document, `bind`, `surface.data`, and — with the `data.template` feature — `template` and the `item` injection |
 
 Core session, `app:*` surfaces, state reporting, durable replay, and the Core
 Node Set are not negotiated capabilities. A Companion claiming EBP core
@@ -5323,6 +5403,7 @@ absent.
 | `toolbar.<identifier>` | an `editor.toolbar` naming a registered toolbar identifier (Section 17.7) | omit `toolbar`, or supply an inline ToolbarItem array |
 | `editor.candidate_kind` | a Section 19.3 completion candidate carrying `kind` | omit the `kind` member from every candidate |
 | `action.open_surface` | a remote ActionDescriptor carrying `open_surface` (Section 14.1) | omit the `open_surface` member |
+| `data.template` | a node carrying `template` and `bind.children` (Section 13.8.5) | expand the template in Emacs and send literal `children` |
 
 A feature name is a Section 4.4 identifier. A receiver MUST ignore an
 unrecognized `features` entry. A new constraining or member-gating feature
@@ -5650,7 +5731,9 @@ a separate normative rule.
 `goldens/data.golden` is the materialization corpus for Section 13.8: JSON-line
 known-answer vectors, each a `spec`, a `data` document, and either the exact
 materialized document or the `error.data.path` at which the snapshot is
-rejected. A Companion claiming `data.model` MUST reproduce every vector.
+rejected, including the Section 13.8.5 template expansions with relative
+pointers, bound keys, nesting and the empty array. A Companion claiming
+`data.model` MUST reproduce every vector.
 
 ### 24.6 Required adversarial tests
 

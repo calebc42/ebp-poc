@@ -76,6 +76,12 @@ MAX_BINDINGS = contract["limits"]["fixed"].get("max_bindings_per_snapshot", 0)
 MAX_DATA_OPS = contract["limits"]["fixed"].get("max_data_ops", 0)
 UNBINDABLE_MEMBERS = set(DATA_SCHEMA.get("unbindable_members", []))
 UNBINDABLE_TAGS = set(DATA_SCHEMA.get("unbindable_tags", []))
+# Amendment #195 (SPEC 13.8.5): templates expanded over bound arrays.
+TEMPLATE_SCHEMA = DATA_SCHEMA.get("template", {})
+MAX_TEMPLATE_ITEMS = contract["limits"]["fixed"].get("max_template_items", 0)
+TEMPLATE_MAX_NESTING = TEMPLATE_SCHEMA.get("max_nesting", 0)
+TEMPLATE_FORBIDDEN_TYPES = set(
+    TEMPLATE_SCHEMA.get("forbidden_inside", {}).get("node_types", []))
 MAX_SEMANTIC_ACTIONS = \
     contract["limits"]["fixed"]["max_semantic_actions_per_node"]
 MIN_VARIANTS = VARIANT_SCHEMA.get("min_items", 2)
@@ -212,6 +218,32 @@ def check_contract():
                 "swipe-object", "semantics-object"):
         if tag not in UNBINDABLE_TAGS:
             problem(f"contract.json: `{tag}` must be an unbindable type")
+    # Amendment #195: a template is one universal attribute typed `node`, one
+    # fixed limit, one member-gating feature, and one scope injection.
+    if "template" not in UNIVERSAL or \
+            contract.get("field_types", {}).get("template") != "node":
+        problem("contract.json: `template` must be a universal attribute "
+                "typed node (13.8.5)")
+    if fixed.get("max_template_items") != 10000:
+        problem("contract.json: max_template_items must be 10000")
+    if TEMPLATE_SCHEMA.get("feature") != "data.template" or \
+            "data.template" not in contract.get("features", []):
+        problem("contract.json: feature `data.template` must be registered "
+                "and named by data_model_schema.template (22.4)")
+    if TEMPLATE_SCHEMA.get("root_must_bind") != ["key"] or \
+            TEMPLATE_SCHEMA.get("max_items_limit") != "max_template_items" \
+            or TEMPLATE_MAX_NESTING != 4 or \
+            TEMPLATE_SCHEMA.get("injection") != "item":
+        problem("contract.json: data_model_schema.template must bind key, "
+                "cap max_template_items, nest 4 deep and inject item")
+    if ACTIONS.get("scope_injections", {}).get("template_item") != ["item"]:
+        problem("contract.json: actions.scope_injections.template_item must "
+                "be [item] (14.3)")
+    pointer_rule = DATA_SCHEMA.get("pointer", {})
+    if pointer_rule.get("absolute_outside_template") is not True or \
+            pointer_rule.get("relative_inside_template") is not True:
+        problem("contract.json: pointers are absolute outside a template "
+                "and relative inside one (13.8.2)")
     # Amendment #169: the candidate member registry and its closed kind
     # vocabulary must exist, and the gating feature must be registered.
     schema = contract.get("candidate_schema")
@@ -1201,14 +1233,16 @@ def check_variants(node: dict, path: str, depth: int, ctx: NodeDocument,
 def _check_node(value, path: str, depth: int, ctx: NodeDocument,
                 inside_variant: bool = False,
                 sibling_keys: dict[str, str] | None = None,
-                collection_ancestors: tuple[tuple[int, int], ...] = ()):
+                collection_ancestors: tuple[tuple[int, int], ...] = (),
+                template_scope: int = 0, template_root: bool = False):
     if isinstance(value, list):
         # A root block sequence is one sibling set; nested arrays share the
         # nearest enclosing Node's set supplied by their caller.
         keys = sibling_keys if sibling_keys is not None else {}
         for i, child in enumerate(value):
             _check_node(child, f"{path}[{i}]", depth, ctx, inside_variant,
-                        keys, collection_ancestors)
+                        keys, collection_ancestors, template_scope,
+                        template_root)
         return
     if not isinstance(value, dict):
         return  # scalars carry no schema
@@ -1229,9 +1263,11 @@ def _check_node(value, path: str, depth: int, ctx: NodeDocument,
         t = value["t"]
         node_type = t
         if "bind" in value:
+            # SPEC 13.8.5: copies expanded from a template keep relative
+            # pointers, and the copy's root keeps its bound `key`.
             check_bind(value, path,
                        t if isinstance(t, str) and t in NODE_TYPES else None,
-                       ctx)
+                       ctx, template_scope > 0, template_root)
         # Universal presentation identity attributes keep their identifier
         # type even on unknown/degraded nodes. A present malformed value is
         # not equivalent to omission (SPEC 16.1/16.3).
@@ -1339,6 +1375,9 @@ def _check_node(value, path: str, depth: int, ctx: NodeDocument,
                       # unknown semantics members are receiver-opaque.
         if node_type is not None and key == "bind":
             continue  # check_bind validated the Bind object (SPEC 13.8.3).
+        if node_type is not None and key == "template":
+            continue  # materialize() expanded it into `children`, which is
+                      # walked as the ordinary subtree it is (SPEC 13.8.5).
         if key in OPAQUE_NODE_WALK_MEMBERS:
             continue
         if (key in HOOK_KEYS or key == "on_trigger") \
@@ -1351,8 +1390,11 @@ def _check_node(value, path: str, depth: int, ctx: NodeDocument,
                 owner_id=value.get("id") if node_type is not None else None,
             )
         else:
+            expanded = node_type is not None and key == "children" \
+                and "template" in value
             _check_node(child, f"{path}.{key}", depth, ctx, inside_variant,
-                        descendant_keys, descendant_collections)
+                        descendant_keys, descendant_collections,
+                        template_scope + (1 if expanded else 0), expanded)
 
 
 def check_node(value, path: str):
@@ -1427,6 +1469,10 @@ def check_widget_surface(spec, path: str):
         if not (isinstance(document, dict)
                 and isinstance(document.get("t"), str)):
             problem(f"{document_path}: must be a Node")
+        templated = find_member(document, document_path, "template")
+        if templated is not None:
+            problem(f"{templated}: a widget body MUST NOT carry template "
+                    "(SPEC 13.8.5)")
     check_node_documents(documents)
 
 
@@ -1471,18 +1517,25 @@ def check_params(method: str, params, path: str):
         spec = params.get("spec")
         if method == "surface.update":
             # Amendment #194: bindings resolve before the walk (SPEC 13.8.3).
-            if "data" in params or find_bind(spec, "") is not None:
+            if "data" in params or find_bind(spec, "") is not None or \
+                    find_member(spec, "", "template") is not None:
                 try:
                     spec = materialize(spec, params.get("data", {}),
                                        f"{path}.spec", f"{path}.data")
                 except MaterializeError as error:
                     problem(f"{error.path}: {error.reason}")
                     return
-            stale_bind = find_bind(params.get("stale_spec"),
-                                   f"{path}.stale_spec")
-            if stale_bind is not None:
-                problem(f"{stale_bind}: stale_spec MUST NOT carry bind "
-                        "(SPEC 13.8.1)")
+            for member in ("bind", "template"):
+                stale = find_member(params.get("stale_spec"),
+                                    f"{path}.stale_spec", member)
+                if stale is not None:
+                    problem(f"{stale}: stale_spec MUST NOT carry {member} "
+                            "(SPEC 13.8.1, 13.8.5)")
+        else:
+            templated = find_member(spec, f"{path}.spec", "template")
+            if templated is not None:
+                problem(f"{templated}: a dialog document MUST NOT carry "
+                        "template (SPEC 13.8.5)")
         if isinstance(spec, dict) and "views" in spec:
             views = spec["views"]
             if isinstance(views, dict):
@@ -1586,18 +1639,26 @@ class MaterializeError(Exception):
 _INDEX_RE = re.compile(r"^(0|[1-9][0-9]*)$")
 
 
-def parse_pointer(text, path: str) -> list[str]:
-    """SPEC 13.8.2: an absolute RFC 6901 pointer within the fixed limits."""
+def parse_pointer(text, path: str, in_scope: bool = False):
+    """SPEC 13.8.2: an RFC 6901 pointer within the fixed limits, as
+    `(absolute, tokens)`. A relative pointer — no leading `/`, the empty
+    pointer included — is admitted only inside a template item scope
+    (SPEC 13.8.5), where it resolves from the scope's element."""
     if not isinstance(text, str):
         raise MaterializeError(path, "pointer must be a string")
     if len(text.encode("utf-8")) > MAX_POINTER_BYTES:
         raise MaterializeError(
             path, f"pointer exceeds max_pointer_bytes ({MAX_POINTER_BYTES})")
     if text == "":
-        return []
-    if not text.startswith("/"):
-        raise MaterializeError(path, "pointer must be absolute (SPEC 13.8.2)")
-    tokens = text[1:].split("/")
+        return not in_scope, []
+    if text.startswith("/"):
+        absolute, body = True, text[1:]
+    elif in_scope:
+        absolute, body = False, text
+    else:
+        raise MaterializeError(
+            path, "pointer must be absolute outside a template (SPEC 13.8.2)")
+    tokens = body.split("/")
     if len(tokens) > MAX_POINTER_SEGMENTS:
         raise MaterializeError(
             path,
@@ -1607,7 +1668,7 @@ def parse_pointer(text, path: str) -> list[str]:
         if re.search(r"~(?![01])", token):
             raise MaterializeError(path, "invalid `~` escape in pointer")
         out.append(token.replace("~1", "/").replace("~0", "~"))
-    return out
+    return absolute, out
 
 
 def resolve_pointer(document, tokens: list[str], path: str):
@@ -1702,8 +1763,14 @@ def value_matches_tag(tag, value, node, member) -> bool:
     return True
 
 
-def unbindable_reason(node_type, member: str):
-    """SPEC 13.8.3: why `member` may not be bound on `node_type`, or None."""
+def unbindable_reason(node_type, member: str, template_root: bool = False,
+                      beside_template: bool = False):
+    """SPEC 13.8.3: why `member` may not be bound on `node_type`, or None.
+    SPEC 13.8.5 admits exactly two exceptions: `key` on a template node and
+    `children` on the node that carries the template."""
+    if (member == "key" and template_root) or \
+            (member == "children" and beside_template):
+        return None
     if member in UNBINDABLE_MEMBERS:
         return f"`{member}` MUST NOT be bound (SPEC 13.8.3)"
     if member.startswith("on_"):
@@ -1719,7 +1786,8 @@ def unbindable_reason(node_type, member: str):
     return None
 
 
-def check_bind(node: dict, path: str, node_type, ctx: NodeDocument):
+def check_bind(node: dict, path: str, node_type, ctx: NodeDocument,
+               in_scope: bool = False, template_root: bool = False):
     """The Bind object's shape and targets; resolution is materialize()."""
     bind = node["bind"]
     if not isinstance(bind, dict):
@@ -1731,34 +1799,40 @@ def check_bind(node: dict, path: str, node_type, ctx: NodeDocument):
         if ctx.binding_count == MAX_BINDINGS + 1:
             problem(f"{bpath}: document exceeds max_bindings_per_snapshot "
                     f"({MAX_BINDINGS})")
-        reason = unbindable_reason(node_type, member)
+        reason = unbindable_reason(node_type, member, template_root,
+                                   "template" in node)
         if reason:
             problem(f"{bpath}: {reason}")
         try:
-            parse_pointer(pointer, bpath)
+            parse_pointer(pointer, bpath, in_scope)
         except MaterializeError as error:
             problem(f"{error.path}: {error.reason}")
 
 
-def find_bind(value, path: str):
-    """The path of the first node carrying `bind`, or None."""
+def find_member(value, path: str, member: str):
+    """The path of the first node carrying the universal attribute `member`
+    (`bind` or `template`), or None."""
     if isinstance(value, list):
         for i, child in enumerate(value):
-            found = find_bind(child, f"{path}[{i}]")
+            found = find_member(child, f"{path}[{i}]", member)
             if found is not None:
                 return found
         return None
     if not isinstance(value, dict):
         return None
-    if "t" in value and "bind" in value:
-        return f"{path}.bind"
+    if "t" in value and member in value:
+        return f"{path}.{member}"
     for key, child in value.items():
         if "t" in value and key in OPAQUE_NODE_WALK_MEMBERS:
             continue
-        found = find_bind(child, f"{path}.{key}")
+        found = find_member(child, f"{path}.{key}", member)
         if found is not None:
             return found
     return None
+
+
+def find_bind(value, path: str):
+    return find_member(value, path, "bind")
 
 
 def materialize(spec, data, spec_path: str, data_path: str):
@@ -1775,16 +1849,122 @@ def materialize(spec, data, spec_path: str, data_path: str):
         raise MaterializeError(
             data_path, f"exceeds max_data_bytes ({MAX_DATA_BYTES})")
     count = 0
+    # SPEC 13.8.5: an item scope is the element a copy resolves relative
+    # pointers from; `_PROBE` marks the single check of a template whose
+    # array is empty, where relatively bound members are present-but-unknown.
+    _PROBE = object()
 
-    def walk(value, path):
+    def check_template_descriptor(descriptor, path):
+        if not isinstance(descriptor, dict):
+            return
+        if "capture_fields" in descriptor:
+            raise MaterializeError(
+                f"{path}.capture_fields",
+                "capture_fields is prohibited inside a template (SPEC 13.8.5)")
+        args = descriptor.get("args")
+        if isinstance(args, dict) and "item" in args:
+            raise MaterializeError(
+                f"{path}.args.item",
+                "conflicts with the item injection (SPEC 14.3)")
+
+    def check_template(template, path, depth):
+        """SPEC 13.8.5: the structural rules of one authored template,
+        reported at the template's own path; nested templates recurse."""
+        if not (isinstance(template, dict) and "t" in template):
+            raise MaterializeError(path, "must be a Node")
+        if depth > TEMPLATE_MAX_NESTING:
+            raise MaterializeError(
+                path, "template scopes nest deeper than "
+                      f"{TEMPLATE_MAX_NESTING} (SPEC 13.8.5)")
+        for member in TEMPLATE_SCHEMA.get("root_forbidden_members", []):
+            if member in template:
+                raise MaterializeError(
+                    f"{path}.{member}",
+                    f"a template node MUST NOT author {member} (SPEC 13.8.5)")
+        for member in TEMPLATE_SCHEMA.get("root_must_bind", []):
+            if not (isinstance(template.get("bind"), dict)
+                    and member in template["bind"]):
+                raise MaterializeError(
+                    f"{path}.{member}",
+                    f"a template node MUST bind {member} (SPEC 13.8.5)")
+
+        def scan(value, vpath):
+            if isinstance(value, list):
+                for i, child in enumerate(value):
+                    scan(child, f"{vpath}[{i}]")
+                return
+            if not isinstance(value, dict):
+                return
+            node_type = value.get("t") if "t" in value else None
+            if node_type is not None:
+                if "id" in value:
+                    raise MaterializeError(
+                        f"{vpath}.id", "id is prohibited inside a template "
+                                       "(SPEC 13.8.5)")
+                if node_type in TEMPLATE_FORBIDDEN_TYPES or \
+                        node_type in VARIANT_FORBIDDEN_STATEFUL or \
+                        (node_type in {"button", "icon_button"}
+                         and "checked" in value):
+                    raise MaterializeError(
+                        vpath, f"`{node_type}` is prohibited inside a "
+                               "template (SPEC 13.8.5)")
+                for hook in HOOK_KEYS:
+                    if hook in value:
+                        check_template_descriptor(value[hook],
+                                                  f"{vpath}.{hook}")
+                for side in ("swipe_start", "swipe_end"):
+                    swipe = value.get(side)
+                    if not isinstance(swipe, dict):
+                        continue
+                    check_template_descriptor(swipe.get("on_trigger"),
+                                              f"{vpath}.{side}.on_trigger")
+                    actions = swipe.get("actions")
+                    if isinstance(actions, list):
+                        for i, action in enumerate(actions):
+                            if isinstance(action, dict):
+                                check_template_descriptor(
+                                    action.get("on_trigger"),
+                                    f"{vpath}.{side}.actions[{i}].on_trigger")
+                if "template" in value:
+                    check_templated_node(value, vpath)
+                    check_template(value["template"], f"{vpath}.template",
+                                   depth + 1)
+            for key, child in value.items():
+                if node_type is not None and (
+                        key in ("bind", "template")
+                        or key in OPAQUE_NODE_WALK_MEMBERS):
+                    continue
+                scan(child, f"{vpath}.{key}")
+
+        scan(template, path)
+
+    def check_templated_node(node, path):
+        if not (isinstance(node.get("bind"), dict)
+                and "children" in node["bind"]):
+            raise MaterializeError(
+                f"{path}.template",
+                "template requires bind.children (SPEC 13.8.5)")
+        if "children" in node:
+            raise MaterializeError(
+                f"{path}.children",
+                "children is both authored and templated (SPEC 13.8.5)")
+
+    def walk(value, path, scope=None, depth=0, template_root=False):
         nonlocal count
         if isinstance(value, list):
-            return [walk(v, f"{path}[{i}]") for i, v in enumerate(value)]
+            return [walk(v, f"{path}[{i}]", scope, depth)
+                    for i, v in enumerate(value)]
         if not isinstance(value, dict):
             return value
         node_type = value.get("t") if "t" in value else None
         out = {}
         resolved = {}
+        expansion = None
+        if node_type is not None and "template" in value and scope is None:
+            # Structural rules once, at the authored path; copies and
+            # nested templates were covered by this scan.
+            check_templated_node(value, path)
+            check_template(value["template"], f"{path}.template", depth + 1)
         if node_type is not None and "bind" in value:
             bind = value["bind"]
             if not isinstance(bind, dict):
@@ -1798,14 +1978,32 @@ def materialize(spec, data, spec_path: str, data_path: str):
                     raise MaterializeError(
                         bpath, "exceeds max_bindings_per_snapshot "
                                f"({MAX_BINDINGS})")
-                reason = unbindable_reason(known, member)
+                reason = unbindable_reason(known, member, template_root,
+                                           "template" in value)
                 if reason:
                     raise MaterializeError(bpath, reason)
                 if member in value:
                     raise MaterializeError(
                         bpath, f"`{member}` is both authored and bound")
-                tokens = parse_pointer(pointer, bpath)
-                found, resolved_value = resolve_pointer(data, tokens, bpath)
+                absolute, tokens = parse_pointer(pointer, bpath,
+                                                 scope is not None)
+                if not absolute and scope is _PROBE:
+                    continue  # present-but-unknown in the empty-array probe
+                found, resolved_value = resolve_pointer(
+                    data if absolute else scope, tokens, bpath)
+                if member == "children" and "template" in value:
+                    if not found:
+                        resolved_value, found = [], True
+                    if not isinstance(resolved_value, list):
+                        raise MaterializeError(
+                            bpath, "a template's children pointer must reach "
+                                   "an array (SPEC 13.8.5)")
+                    if len(resolved_value) > MAX_TEMPLATE_ITEMS:
+                        raise MaterializeError(
+                            bpath, "exceeds max_template_items "
+                                   f"({MAX_TEMPLATE_ITEMS})")
+                    expansion = resolved_value
+                    continue
                 if found:
                     tag = resolve_member_type(known, member) if known \
                         else FIELD_TYPES.get(member)
@@ -1820,11 +2018,23 @@ def materialize(spec, data, spec_path: str, data_path: str):
                         bpath, f"required `{member}` reaches nothing")
         for key, child in value.items():
             if node_type is not None and \
-                    (key == "bind" or key in OPAQUE_NODE_WALK_MEMBERS):
+                    (key in ("bind", "template")
+                     or key in OPAQUE_NODE_WALK_MEMBERS):
                 out[key] = child
             else:
-                out[key] = walk(child, f"{path}.{key}")
+                out[key] = walk(child, f"{path}.{key}", scope, depth)
         out.update(resolved)
+        if expansion is not None:
+            template = value["template"]
+            if expansion:
+                out["children"] = [
+                    walk(template, f"{path}.children[{i}]", element,
+                         depth + 1, template_root=True)
+                    for i, element in enumerate(expansion)]
+            else:
+                walk(template, f"{path}.template", _PROBE, depth + 1,
+                     template_root=True)
+                out["children"] = []
         return out
 
     return walk(spec, spec_path)
@@ -1861,7 +2071,7 @@ def check_data_ops(params: dict, path: str):
             if member not in allowed:
                 problem(f"{opath}.{member}: unknown DataOp member")
         try:
-            tokens = parse_pointer(op.get("path"), f"{opath}.path")
+            _, tokens = parse_pointer(op.get("path"), f"{opath}.path")
         except MaterializeError as error:
             problem(f"{error.path}: {error.reason}")
             continue
