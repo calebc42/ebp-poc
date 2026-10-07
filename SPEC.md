@@ -1642,12 +1642,22 @@ Value-schema compatibility is exact:
   U+000A when the new node is `single_line`, no scalar rejected by the new
   node's `filter`, and no more Unicode scalars than the new node's
   `max_length` when that member is present;
-- `checkbox` and `switch` remain compatible with the same node type because
-  their value is boolean;
+- `search_bar`, and a `dropdown` with `editable: true` in both snapshots,
+  require a string;
+- `switch`, a `checkbox` in its boolean `checked` form in both snapshots, and a
+  toggle `button` or `icon_button` remain compatible with the same node type
+  because their value is boolean; a `checkbox` in its `state` form in both
+  snapshots requires one of the three `state` strings, and a change between the
+  two `checkbox` forms is incompatible;
 - `enum_list` requires the same `multi_select` mode and every retained value to
-  remain legal under the new `options` and `allow_add` rules;
-- `slider` requires the retained number to remain inside the new continuous
-  range or equal one of the new discrete `values`; and
+  remain legal under the new `options` and `allow_add` rules; a
+  `segmented_button` requires the same `multi_select` mode and every retained
+  value to remain one of the new `options`; and a `dropdown` without `editable`
+  in both snapshots requires the retained value to remain one of the new
+  `options`;
+- `slider` requires the same single or range form, and each retained number to
+  remain inside the new continuous range or equal one of the new discrete
+  `values`, with a range's start not exceeding its end; and
 - `variant_host` requires an identifier that remains one of the new host's
   authored `Variant.value` identifiers; and
 - a local `editor` draft requires `publish_state: true` and no `document` in
@@ -1896,6 +1906,8 @@ is invalid.
 | `on_day_tap` | `value` as `YYYY-MM-DD` |
 | `on_month_change` | `value` as `YYYY-MM` |
 | `on_point_tap` | `value` as the authored point object and `index` as that point's zero-based ordinal index in the first series |
+| `on_sheet_change` | `value` as the settled `scaffold.sheet_state` string |
+| `on_expand_change` | `value` as the settled `navigation_rail.expanded` boolean |
 
 Hooks without an entry in this table inject nothing.
 
@@ -2557,8 +2569,10 @@ otherwise. Numeric values MUST be finite; layout numbers MUST also be
 non-negative. Arrays and strings MUST fit Section 4.5 and the advertised module
 limits.
 
-Fields named `id` and `key` are identifiers; `color` and `bg` are Colors;
-`width`, `height`, `size`, `radius`, and coordinate fields are finite numbers;
+Fields named `id` and `key` are identifiers; `color`, `color_end`, and `bg`
+are Colors; `width`, `height`, `size`, `radius`, and coordinate fields are
+finite numbers, except that `size` on `button` and `icon_button` is the closed
+vocabulary of Section 17.4;
 and `scroll`, `selectable`, boolean-valued `selected`, and boolean-valued `fill` are booleans.
 Where a table lists a member without an inline type, these common types or the
 member-specific prose immediately after the table supplies its type. These
@@ -2567,10 +2581,27 @@ a receiver MUST NOT apply type coercion omitted by them.
 
 `font_weight` is `normal`, `bold`, or an integer multiple of 100 from 100
 through 900. `selectable`, `italic`, `underline`, and `mono` are booleans.
-`size`, `spacing`, `run_spacing`, `content_padding`, `elevation`, and
-`thickness` are non-negative `dp`. An action-valued field MUST contain a valid
+`size` (with the same exception), `spacing`, `run_spacing`, `content_padding`,
+`elevation`, `shadow_elevation`, `thickness`, `overlap`, `content_spacing`,
+`item_width`, `item_spacing`, `item_corner`, `caret_width`, `caret_height`,
+`sheet_peek_height`, `top_bar_expanded_height`, and `top_bar_collapsed_height`
+are non-negative `dp`. An action-valued field MUST contain a valid
 descriptor even when the platform cannot expose that interaction; a sender
 MUST NOT rely on a hidden action as the only path to load-bearing behavior.
+
+Three members are SYNCED PRESENTATION STATE: `tooltip.shown`,
+`navigation_rail.expanded`, and `scaffold.sheet_state`. The first accepted
+snapshot for a Section 16.1 presentation identity presents the authored value.
+A later accepted snapshot moves the presentation to its authored value only
+when that value differs under Section 4.3 equality from the value in the
+previously accepted snapshot for the same identity; an unchanged authored
+value MUST NOT override the current presentation. A user gesture MAY change
+the presentation locally; the Companion MUST then hold the local state until
+an accepted snapshot changes the authored value, and MUST dispatch the node's
+report hook, where one is defined, exactly once with the settled value.
+Synced presentation state is not a Section 13.6 draft: it publishes no
+`state.changed`, cannot be captured, and does not appear in welcome
+`input_state`.
 
 ### 17.2 Content nodes
 
@@ -2583,8 +2614,9 @@ MUST NOT rely on a hidden action as the only path to load-bearing behavior.
 | `date_stamp` | — | `day`, `month`, `month_index`, `year`, `time`. At least one SHOULD be present. This is presentation data, not a clock instruction. |
 | `section_header` | `title: string` | `trailing: Node` |
 | `empty_state` | — | `icon`, `title`, `caption`, `action_label`, `on_tap` |
-| `progress` | — | `variant`, `value`. `variant` is `circular` (default) or `linear`. Omitted `value` is indeterminate; supplied `value` MUST be `0..1`. |
+| `progress` | — | `variant`, `value`. `variant` is `circular` (default), `linear`, `circular_wavy`, `linear_wavy`, `loading`, or `contained_loading`; unknown values fall back to `circular`. Omitted `value` is indeterminate; supplied `value` MUST be `0..1`. |
 | `badge` | `label: string` | `icon`, `color`, `children`. An empty label MAY render as an attention dot. A decimal-integer string MAY be visually capped, but its exact accessible value MUST remain available. |
+| `tooltip` | `children: Node[]`, `text: string` | `position`, `caret`, `caret_width`, `caret_height`, `rich`, `title`, `action_label`, `on_action`, `shown`. The `children` are the anchor; `text` is supplementary content revealed on demand. |
 
 A `RichSpan` MUST contain `text: string` and MAY contain `font_weight`, `italic`,
 `underline`, `color`, `bg`, `mono`, and `on_tap`. The Companion MUST treat span
@@ -2595,6 +2627,50 @@ For `date_stamp`, `day` is an integer `1..31`, `month` is a display string,
 `time` is a display string. `section_header.trailing` is a Node. In an
 `empty_state`, `action_label` and `on_tap` MUST appear together or both be
 absent. `badge.children`, when present, is a Node array.
+
+`progress.variant` values are toolkit-neutral presentation intents. `circular`
+and `linear` are the ordinary ring and bar indicators; `circular_wavy` and
+`linear_wavy` are the same indicators drawn with an undulating active track;
+`loading` is a compact busy indicator whose glyph changes outline as it
+animates; and `contained_loading` draws that indicator on a filled container.
+Every variant has the same `value` semantics and the same derived Section
+16.5.1 range: a variant never changes whether progress is determinate. Exact
+geometry and motion are renderer-owned under Section 16.4.
+
+A `tooltip` presents its `children` in place, in array order as a neutral
+vertical sequence — exactly the Section 16.2 fallback, so a Companion that does
+not advertise `tooltip` presents the same anchor without the supplementary
+content. The tooltip's content appears in a transient popup near the anchor
+when the user performs the platform's reveal gesture on the anchor (such as a
+long press, pointer hover, or keyboard or accessibility focus) and disappears
+on the platform's ordinary dismissal. A Companion SHOULD expose `text` to
+accessibility services as a description of the anchor. Because a Companion
+need not advertise the node and a reveal gesture is not discoverable, Emacs
+MUST NOT make a tooltip the only carrier of load-bearing meaning or the only
+route to an action.
+
+`tooltip.position` is `above` (default), `below`, `left`, `right`, `start`, or
+`end`; `start` and `end` follow the layout direction, while `left` and `right`
+do not. A Companion MAY place the popup on the opposite side when the
+requested side lacks room. An unknown `position` falls back to `above` under
+Section 12 rule 6. `caret: true` draws a pointer from the popup toward the
+anchor. `caret_width` and `caret_height` size that pointer; they MUST appear
+together or both be absent, and MAY appear only with `caret: true`.
+
+`rich` defaults to `false`. A plain tooltip presents `text` alone as one short
+label. A rich tooltip presents an optional `title` above `text` as its body and
+MAY carry one action: `action_label` and `on_action` MUST appear together or
+both be absent. A Companion MUST ignore `title`, `action_label`, and
+`on_action` on a plain tooltip. Activating the action dispatches `on_action`
+once and dismisses the tooltip. A rich tooltip carrying an action SHOULD remain
+presented until the user dismisses it or activates the action, so that the
+action stays reachable.
+
+`tooltip.shown` is synced presentation state (Section 17.1) and defaults to
+`false`. An authored `true` presents the tooltip without a reveal gesture; an
+authored `false` leaves presentation to the reveal gesture. A user dismissal
+of a tooltip authored `shown: true` holds locally under the synced-state rule
+and reports nothing, because `tooltip` defines no report hook.
 
 For an `image`, no URI form is implicit. A Companion advertising `image` in a
 target profile MUST advertise at least one of `image.https` or `image.data` in
@@ -2666,19 +2742,21 @@ disconnected a Companion MAY render a cached image, or MUST otherwise render
 
 | `t` | Required members | Optional members and semantics |
 |---|---|---|
-| `row` | `children: Node[]` | `spacing`, `align`, `arrange`, `scroll`, `fill`. `align`: `top`, `center`, `bottom`, `baseline`; default `center`. |
-| `column` | `children: Node[]` | `spacing`, `align`, `arrange`, `scroll`, `fill`. `align`: `start`, `center`, `end`; default `start`. |
+| `row` | `children: Node[]` | `spacing`, `align`, `arrange`, `scroll`, `fill`, `overlap`, `content_padding`. `align`: `top`, `center`, `bottom`, `baseline`; default `center`. |
+| `column` | `children: Node[]` | `spacing`, `align`, `arrange`, `scroll`, `fill`, `reverse_scroll`, `overlap`. `align`: `start`, `center`, `end`; default `start`. |
 | `flow_row` | `children: Node[]` | `spacing`, `run_spacing`, `align`, `arrange`. Children wrap to later runs. |
-| `box` | `children: Node[]` | `alignment`, `on_tap`. Children stack in array order from back to front. |
-| `surface` | `children: Node[]` | `color`, `shape`, `elevation`. This node is a visual container and is distinct from a protocol Surface. |
+| `box` | `children: Node[]` | `alignment`, `on_tap`, `on_long_tap`. Children stack in array order from back to front. |
+| `surface` | `children: Node[]` | `color`, `shape`, `elevation`, `shadow_elevation`. This node is a visual container and is distinct from a protocol Surface. |
 | `lazy_column` | `children: Node[]` | `spacing`, `content_padding`. The Companion MAY instantiate only visible children but MUST preserve array order. |
+| `lazy_grid` | `children: Node[]` | `columns`, `min_item_width`, `reverse`, `spacing`, `content_padding`. A vertically scrolling grid; the Companion MAY instantiate only visible children but MUST preserve array order. |
+| `carousel` | `children: Node[]` | `strategy`, `item_width`, `item_spacing`, `content_padding`, `item_corner`. A horizontally scrolling item sequence whose item sizing the Companion owns. |
 | `variant_host` | `id: identifier`, `value: identifier`, `variants: Variant[]` | Present the exact alternative whose `Variant.value` equals the host's current logical value. |
 | `spacer` | — | `width`, `height`, `weight` |
 | `divider` | — | `color`, `thickness` |
-| `card` | `children: Node[]` | `on_tap`, `on_long_tap`, `swipe_start`, `swipe_end`. |
+| `card` | `children: Node[]` | `on_tap`, `on_long_tap`, `swipe_start`, `swipe_end`, `variant`. `variant`: `filled` (default), `elevated`, or `outlined`. |
 | `collapsible` | `id: identifier`, `header: Node`, `children: Node[]` | `collapsed`, `on_long_tap`, `swipe_start`, `swipe_end`. Expansion state is Companion-local presentation state. |
 | `reorderable_list` | `items: Node[]` | `on_reorder`. Every item MUST have a unique `key` or `id`; otherwise the node is invalid. |
-| `tabs` | `items: TabItem[]`, `children: Node[]` | `initial`, `scrollable`, `pager_only`, `on_change`, `id`. Arrays MUST have equal non-zero length. |
+| `tabs` | `items: TabItem[]`, `children: Node[]` | `initial`, `scrollable`, `pager_only`, `on_change`, `id`, `style`, `indicator`. Arrays MUST have equal non-zero length. |
 | `tab_selector` | `items: TabItem[]`, `selected: integer`, `on_change: ActionDescriptor` | `scrollable`, `id`, `style`, `indicator`. A controlled tab strip which selects externally authored content and owns no child pages. |
 | `table` | `rows: TableRow[]` | `aligns`, `on_add_row`, `on_add_col`. Wide tables MAY scroll horizontally. |
 
@@ -2714,11 +2792,82 @@ precedence over `spacing`.
 `scroll` and layout `fill` are booleans. `flow_row.align` is `top`, `center`, or
 `bottom`, default `top`. `content_padding` is a non-negative `dp` value.
 
+`overlap` on a `row` or `column` is the distance by which each child after the
+first is drawn toward its predecessor along the main axis, so that adjacent
+children interlock. It is the only way to author a negative arrangement,
+because `spacing` stays non-negative. `overlap` and `spacing` MUST NOT both
+appear on one node, and an arrangement other than `start` takes precedence over
+`overlap` exactly as it does over `spacing`. Overlap changes drawing positions
+only: layout order, accessibility traversal, and identity remain array order,
+and where two children overlap the later child is drawn above the earlier.
+
+`row.content_padding` is an inset applied inside the scroll viewport rather
+than outside it, so content scrolls beneath the inset; it has no effect unless
+`scroll` is true and is distinct from the universal `padding`.
+`column.reverse_scroll` defaults to `false`; when `true` on a scrolling
+column, the column's end is its scroll origin, so its first presentation shows
+the end of the content. It does not reorder children and has no effect unless
+`scroll` is true.
+
 `box.alignment` is one of `top_start`, `top_center`, `top_end`, `center_start`,
 `center`, `center_end`, `bottom_start`, `bottom_center`, or `bottom_end`; the
-default is `top_start`. `surface.shape` is `rounded`, `rounded_small`, or
-`circle`; omission is rectangular. A numeric universal `corner` overrides
-`shape` except that `circle` remains circular.
+default is `top_start`. A `box` with `on_long_tap` dispatches it on a long
+press and `on_tap` on an ordinary press, exactly as a `card` does; each gesture
+dispatches only its own hook.
+
+`surface.shape` is `rounded`, `rounded_small`, `circle`, or one of the named
+outlines below; omission is rectangular, and an unknown value falls back to
+rectangular under Section 12 rule 6. A numeric universal `corner` overrides
+`shape` except that `circle` remains circular. The named outlines are
+`square`, `slanted`, `arch`, `fan`, `arrow`, `semi_circle`, `oval`, `pill`,
+`triangle`, `diamond`, `clam_shell`, `pentagon`, `gem`, `sunny`, `very_sunny`,
+`cookie_4_sided`, `cookie_6_sided`, `cookie_7_sided`, `cookie_9_sided`,
+`cookie_12_sided`, `ghostish`, `clover_4_leaf`, `clover_8_leaf`, `burst`,
+`soft_burst`, `boom`, `soft_boom`, `flower`, `puffy`, `puffy_diamond`,
+`pixel_circle`, `pixel_triangle`, `bun`, and `heart`. Each names one fixed
+closed outline with rounded vertices, scaled to the node's bounds; its exact
+geometry is renderer-owned under Section 16.4, and like every shape it is
+decoration that MUST NOT carry load-bearing meaning. `surface.elevation`
+requests tonal elevation, which a receiver MAY express by adjusting the
+container colour, and `shadow_elevation` requests a cast shadow of that height;
+both default to `0` and are independent of each other.
+
+`card.variant` is a toolkit-neutral presentation intent: `filled` (default) is
+a container distinguished by fill alone, `elevated` a container lifted by a
+shadow, and `outlined` a container with a visible boundary. An unknown value
+falls back to `filled` under Section 12 rule 6. The variant never changes a
+card's gestures.
+
+A `lazy_grid` lays its `children` out in row-major array order in a vertically
+scrolling grid. `columns` is a positive integer column count and defaults to
+`2`. `min_item_width`, a positive `dp` value when present, outranks `columns`:
+the Companion then presents as many equal-width columns as fit with each at
+least `min_item_width` wide, and never fewer than one. Only the Companion knows
+its width, so Emacs never learns the resulting column count. `spacing` is the
+gap between adjacent cells on both axes and `content_padding` is an inset
+inside the scroll viewport, as for `row`. `reverse` defaults to `false`; when
+`true` the grid is laid out from its end, so the first child occupies the
+end-most position and the grid first presents its end. `reverse` changes
+neither array order nor child identity.
+
+A `carousel` presents its `children` as the items of one horizontally
+scrolling sequence, in array order. The Companion performs all item sizing,
+positioning, and masking from its own width, which Emacs never learns: each
+child is one item, shown through a visible region that the Companion MAY
+narrow as the item moves toward an edge, so an item SHOULD remain legible when
+only part of it is visible. `strategy` is `multi_browse` (default), which shows
+one large item with smaller items beside it; `uncontained`, which shows items
+at a constant `item_width` that scroll freely past the viewport edge; or
+`centered_hero`, which centers one large item with smaller items peeking on
+both sides. An unknown `strategy` falls back to `multi_browse` under Section
+12 rule 6. `item_width` is the preferred width of the large item under
+`multi_browse` and the constant item width under `uncontained`; `centered_hero`
+sizes its items itself and ignores it, and omission selects a receiver default.
+`item_spacing` is the gap between items, `content_padding` an inset inside the
+scroll viewport as for `row`, and `item_corner` a corner radius applied to each
+item's visible region rather than to the node's own bounds, so the clip follows
+the region as it narrows. Every item MUST remain reachable by scrolling and by
+accessibility traversal in array order.
 
 `collapsible.collapsed` is boolean and defaults to `false`. It seeds only the
 first snapshot for a new presentation identity. The Companion MUST preserve
@@ -2727,7 +2876,17 @@ Section 16.1 presentation identity, regardless of a repeated authored
 `collapsed` value. Removal, type change, or a new presentation identity
 discards that local state and seeds it again from `collapsed`.
 
-A `TabItem` MUST contain `label: string` and MAY contain `icon`. `initial` is a
+A `TabItem` MUST contain `label: string` and MAY contain `icon`,
+`icon_position`, `tooltip`, `content`, and `selected_content`. `icon_position`
+is `above` (default) or `leading` and places the icon above or before the
+label; an unknown value falls back to `above`. `tooltip` is plain text revealed
+as a plain `tooltip` node's `text` is (Section 17.2) and SHOULD accompany a tab
+whose face is an icon alone. `content` is a Node drawn as the tab's face in
+place of the default label-and-icon face, and `selected_content` is a Node
+drawn as the face while the tab is the selected tab; the Companion swaps the
+two on the selection it presents, so a selection-dependent face needs no
+report to Emacs. `label` remains REQUIRED as the tab's accessible name under
+Section 16.4 even when a face Node replaces it. `initial` is a
 zero-based index and defaults to `0`. The Companion MUST preserve the selected
 index across snapshots with the same Section 16.1 presentation identity; a new
 identity resets to `initial`. If a later same-identity snapshot has fewer items
@@ -2739,6 +2898,18 @@ For `tabs`, `id` is an identifier; `scrollable` and `pager_only` are booleans;
 and `initial` MUST be less than the common non-zero item count. Omitting `id`
 does not create a special rule: `key` and then tree path supply presentation
 identity under Section 16.1.
+
+`tabs.style` is `primary` (default), the strip for a set of top-level peer
+destinations, or `secondary`, a subordinate strip within one destination's
+content; an unknown value falls back to `primary`. `indicator` is the object
+`{kind, color?, inset?}` overriding the style's default selection indicator.
+`kind` is `underline`, a bar along the selected tab's bottom edge, or
+`outline`, a rounded outline around the selected tab; an unknown `kind` falls
+back to `underline`. `color` is a Color. `inset` is a non-negative `dp`
+distance, default `0`, by which an `outline` is inset from the selected tab's
+bounds; `underline` ignores it. The indicator follows the selection with the
+receiver's ordinary motion, and its exact geometry is renderer-owned under
+Section 16.4.
 
 For `tab_selector`, `items` MUST be non-empty and `selected` MUST be a
 zero-based index less than the item count. It is controlled presentation:
@@ -2795,18 +2966,22 @@ node. `editor` uses `read_only` for editing permission in addition to
 
 | `t` | Required members | Optional members and semantics |
 |---|---|---|
-| `button` | `label: string`, `on_tap: ActionDescriptor` | `icon`, `variant`, `enabled`. `variant`: `filled` (default), `tonal`, `outlined`, or `text`. |
-| `icon_button` | `icon: identifier`, `on_tap: ActionDescriptor` | `content_description`, `badge`, `enabled` |
-| `chip` | `label: string` | `on_tap`, `selected`, `icon`, `enabled` |
+| `button` | `label: string`, `on_tap: ActionDescriptor` | `icon`, `variant`, `enabled`, `size`, `shape`, `animate_shape`, `color`, `expanded`, `checked`, `checked_icon`, `checked_shape`, `shape_role`, `on_change`. `variant`: `filled` (default), `tonal`, `elevated`, `outlined`, or `text`. |
+| `icon_button` | `icon: identifier`, `on_tap: ActionDescriptor` | `content_description`, `badge`, `enabled`, `variant`, `size`, `shape`, `width_mode`, `color`, `checked`, `checked_icon`, `on_change`. `variant`: `filled`, `tonal`, or `outlined`; omission is the uncontained form. |
+| `chip` | `label: string` | `on_tap`, `selected`, `icon`, `enabled`, `variant`, `trailing_icon`, `avatar`, `content_spacing`. `variant`: `flat` (default), `elevated`, or `input`. |
 | `menu` | none | `items`, `groups`, `footer`, `icon`, `enabled`, `initial_scroll`. Exactly one of `items: MenuItem[]` and `groups: MenuGroup[]`. `icon` is the overflow anchor's glyph; `footer` is one Node drawn inside the popup below the rows; `initial_scroll`: `start` (default) or `end`. |
 | `text_input` | `id: identifier` | `value`, `hint`, `label`, `on_change`, `on_submit`, `single_line`, `min_lines`, `max_lines`, `monospace`, `syntax`, `password`, `keyboard`, `autofocus`, `clear_on_submit`, `variant`, `is_error`, `supporting_text`, `prefix`, `suffix`, `leading_icon`, `trailing_icon`, `max_length`, `selection`, `hide_keyboard_on_submit`, `content_padding`, `mask`, `filter`, `enabled` |
 | `editor` | `id: identifier` | `document`, `value`, `on_save`, `on_enter`, `single_line`, `min_lines`, `max_lines`, `read_only`, `syntax`, `line_numbers`, `complete`, `chromeless`, `publish_state`, `autofocus`, `toolbar`, `enabled` |
-| `checkbox` | `id: identifier` | `checked`, `label`, `on_change`, `enabled` |
-| `switch` | `id: identifier` | `checked`, `label`, `on_change`, `enabled` |
-| `enum_list` | `id: identifier`, `options: EnumOption[]` | `value`, `multi_select`, `allow_add`, `on_change`, `enabled` |
-| `date_button` | `label: string`, `on_pick: ActionDescriptor` | `value`, `enabled` |
-| `time_button` | `label: string`, `on_pick: ActionDescriptor` | `value`, `enabled` |
-| `slider` | `id: identifier`, `on_change: ActionDescriptor` | `value`, `min`, `max`, `values`, `enabled` |
+| `checkbox` | `id: identifier` | `checked`, `state`, `stroke`, `label`, `on_change`, `enabled`. `state`: `off`, `on`, or `indeterminate`; mutually exclusive with `checked`. |
+| `switch` | `id: identifier` | `checked`, `label`, `on_change`, `enabled`, `thumb_icon` |
+| `enum_list` | `id: identifier`, `options: EnumOption[]` | `value`, `multi_select`, `allow_add`, `on_change`, `enabled`, `variant`, `children`. `variant`: `chips` (default) or `radio`. |
+| `date_button` | `label: string`, `on_pick: ActionDescriptor` | `value`, `enabled`, `mode`, `min_date`, `max_date`, `disabled_weekdays`. `mode`: `calendar` (default) or `input`. |
+| `time_button` | `label: string`, `on_pick: ActionDescriptor` | `value`, `enabled`, `display_mode`. `display_mode`: `picker` (default), `input`, or `switchable`. |
+| `slider` | `id: identifier`, `on_change: ActionDescriptor` | `value`, `value_end`, `min`, `max`, `values`, `enabled`, `orientation`, `track`, `color`, `color_end`, `thumb_icon`, `value_label`, `track_icon_start`, `track_icon_end`. `orientation`: `horizontal` (default) or `vertical`; `track`: `default` (default) or `centered`. |
+| `search_bar` | `id: identifier` | `value`, `hint`, `variant`, `on_change`, `on_search`, `leading_icon`, `trailing_icon`, `children`, `enabled`. `variant`: `full_screen` (default) or `docked`. |
+| `dropdown` | `id: identifier`, `options: EnumOption[]` | `value`, `label`, `hint`, `editable`, `on_change`, `report_caret`, `enabled` |
+| `segmented_button` | `id: identifier`, `options: EnumOption[]` | `value`, `multi_select`, `on_change`, `enabled` |
+| `button_group` | `items: ButtonGroupItem[]` | `overflow_icon`. Items that do not fit move into an overflow menu. |
 
 A `MenuItem` MUST contain `label` and `on_tap` and MAY contain `icon`,
 `supporting_text`, `trailing_icon`, `trailing_text`, `checked`, `checked_icon`,
@@ -2829,9 +3004,74 @@ A `MenuGroup` is `{label?, items}`: `items` is a non-empty `MenuItem[]`, and a
 non-empty `label` heads the group above a separator. A menu MUST present one
 item layout throughout a single popup.
 
+`button.variant` and `icon_button.variant` are toolkit-neutral emphasis
+intents: `filled` is the highest-emphasis filled container, `tonal` a
+lower-emphasis filled container, `elevated` a container lifted by a shadow,
+`outlined` a visible boundary without fill, and `text` content without a
+container; an `icon_button` without `variant` is drawn without a container. An
+unknown variant falls back to omission — `filled` for a `button`, the
+uncontained form for an `icon_button` — under Section 12 rule 6. `size` is
+`xsmall`, `small`, `medium`, `large`, or `xlarge` on a `button` and one of the
+first four on an `icon_button`; omission selects the receiver's ordinary size.
+`shape` is `round` or `square` and names the resting outline; omission selects
+the receiver's ordinary outline. `animate_shape: true` lets the outline morph
+while the control is pressed. `icon_button.width_mode` is `narrow`, `uniform`,
+or `wide` and sets the control's width relative to its height; omission
+selects `uniform`. An unknown `size`, `shape`, or `width_mode` falls back to
+omission. `color` on an `icon_button` tints its icon; on a `button` it recolours
+the content (label and icon) and is intended for the `text` variant, while a
+container-bearing variant keeps its variant-derived container colours and MAY
+ignore it. None of these members changes the control's gestures, enabled
+state, or accessible name.
+
+A `checked` member present makes a `button` or `icon_button` a TOGGLE: a
+Section 14.6 stateful node whose logical value is that boolean, seeded by the
+authored `checked`. A toggle SHOULD carry `id`, its Section 14.6 wire address;
+a toggle without `id` still flips and dispatches its actions but publishes no
+`state.changed` and holds no draft. Activating an enabled toggle flips its live
+value and then, in this order, publishes `state.changed`, dispatches
+`on_change` when present with the new boolean as `args.value`, and dispatches
+`on_tap`. While the live value is `true`, `checked_icon`, when present, replaces
+`icon`, and a `button` presents the `checked_shape` outline (`round` or
+`square`) in place of its resting `shape`; an unknown `checked_shape` falls
+back to omission. On a node without `checked`, `checked_icon` and
+`checked_shape` are ignored and `on_change` MUST NOT be dispatched.
+
+`button.shape_role` places the button in a connected group of adjacent buttons
+laid out by a `row` or `column`, typically with `overlap`: `leading`, `middle`,
+and `trailing` across a row, and `top`, `middle`, and `bottom` down a column.
+The Companion then draws the connected outline for that position — the
+group's outer corners on its end buttons and inner corners between neighbours,
+with the matching pressed and checked outlines — in place of `shape` and
+`checked_shape`. An unknown value falls back to omission. `shape_role` is
+presentation only: each button keeps its own actions, state, and accessible
+name.
+
+`button.expanded` is `true` (the meaning of omission), `false`, or the string
+`auto`. `false` presents only the button's `icon`, the compact form of a
+floating action control, and is ignored when no `icon` is authored; `label`
+remains the accessible name. `auto` derives the presentation from the scroll
+position of the `body` of the `scaffold` that contains the button: expanded
+while that body rests at its start and compact while it is scrolled away. The
+derivation is Companion-local and produces no wire traffic; outside a
+scaffold, `auto` behaves as `true`.
+
+`chip.variant` is `flat` (default), `elevated`, or `input`; an unknown value
+falls back to `flat`. `flat` and `elevated` differ only in elevation, while
+`input` presents the chip as a token standing for an authored entity such as a
+recipient. `avatar` is an identifier naming a larger circular leading image
+slot distinct from `icon`; it is meaningful only with `variant: input`, and
+other variants ignore it. `trailing_icon` names a decoration drawn at the
+chip's trailing edge; like a `text_input` trailing icon it is not a separate
+click target and MUST NOT provide the only route to an action.
+`content_spacing` is the gap between the chip's own icon, label, and trailing
+slots.
+
 An `EnumOption` MUST contain `label`
 and `value`; `value` MUST be a
 string, number, or boolean. Option values MUST be distinct under Section 4.3.
+An `EnumOption` MAY also contain `icon`, which a `segmented_button` draws beside
+the option's label; other nodes MAY ignore it.
 
 For input nodes, every listed `on_*` member is an ActionDescriptor. `value`,
 `hint`, `label`, `supporting_text`, `prefix`, `suffix`, and `mask` on
@@ -2981,6 +3221,23 @@ Section 19 synchronization methods.
 produce `state.changed`; when `on_change` is present it MUST also produce an
 action with the boolean in `args.value`, after the state notification.
 
+A `checkbox` has two mutually exclusive value forms, and `state` and `checked`
+MUST NOT both appear. The boolean form uses `checked`. The tri-state form uses
+`state`, whose logical value is the string `off`, `on`, or `indeterminate`;
+that string is what `state.changed`, `on_change`'s `args.value`, captured
+fields, and welcome `input_state` carry. A user activation moves `off` and
+`indeterminate` to `on`, and `on` to `off`, so only an authored value
+establishes `indeterminate`. `state` is a logical value rather than a
+presentation intent, so an unknown `state` value is content-invalid and has no
+fallback. `stroke` is an object requesting a non-default line treatment for the
+box outline and check mark. This document does not yet register its members:
+a receiver MUST ignore the object's members, and a sender MUST NOT rely on it
+for meaning. It never changes the checkbox's value, form, or accessibility.
+
+`switch.thumb_icon` names a decorative glyph drawn inside the switch's thumb;
+it never replaces `label` or the derived checked state as the accessible
+meaning.
+
 For `enum_list`, `multi_select` and `allow_add` default to `false`. A
 single-select value is one option value; a multi-select value is an array of
 distinct option values. Unless `allow_add` is true, every selected value MUST
@@ -2990,8 +3247,32 @@ another selection; it does not mutate the authored option list.
 When `value` is omitted, a single-select list has no selection and its logical
 captured value is `null`; a multi-select list starts with `[]`. The Companion
 MUST NOT select the first option implicitly.
+
+`enum_list.variant` is `chips` (default) or `radio`; an unknown value falls
+back to `chips`. Both forms share the same `id`, `options`, `value`,
+`on_change`, and state path and differ only in the selection affordance: under
+`chips` each option is a selectable chip; under `radio` a single-select list
+presents one exclusive radio control per option within one selection group,
+and a multi-select list presents one check control per option. `children`,
+when present, is a Node array parallel to `options` and MUST have the same
+length. Each option is then presented as one whole selectable row whose body
+is the corresponding child; the child keeps its universal attributes, and the
+option's `label` remains the row's accessible name.
+
 `date_button.value` is `YYYY-MM-DD`; `time_button.value`
 is `HH:MM` in local civil time.
+
+`date_button.mode` selects the date picker's initial presentation: `calendar`
+(default) a month calendar, or `input` text entry of a date; an unknown value
+falls back to `calendar`. `date_button.min_date`, `max_date`, and
+`disabled_weekdays` have the formats and constraints they have on `month_grid`
+(Section 17.5): a day outside the inclusive bounds or on a disabled weekday
+MUST NOT be selectable in the picker, and the Companion MUST NOT dispatch
+`on_pick` with such a day. `time_button.display_mode` selects the time
+picker's presentation: `picker` (default) a dial, `input` text entry, or
+`switchable` a dial with a local control switching between the two; an
+unknown value falls back to `picker`. Neither member changes the `value`
+format.
 
 For a continuous `slider`, `min` defaults to `0`, `max` to `1`, and `value` to
 `min`; `min` MUST be less than `max` and `value` MUST be in the closed range. A
@@ -3002,6 +3283,91 @@ exact selected authored number, avoiding toolkit-specific step arithmetic. It
 SHOULD dispatch
 `on_change` once when the user commits a gesture, not for every intermediate
 pixel.
+
+`value_end` present makes a slider a RANGE slider whose logical value is the
+two-number array `[value, value_end]`; that array is what `state.changed`,
+`on_change`'s `args.value`, captured fields, and welcome `input_state` carry.
+Each end obeys the rules above for `value`: it lies inside the continuous
+closed range, or equals one listed discrete number under Section 4.3. `value`
+keeps its default, and `value` MUST NOT exceed `value_end`. The user cannot
+drag either thumb past the other. `orientation` is `horizontal` (default) or `vertical`.
+`track` is `default` or `centered`; `centered` fills the active track from the
+midpoint of the range toward the thumb rather than from the range's start.
+Unknown `orientation` and `track` values fall back to `horizontal` and
+`default` under Section 12 rule 6. `color` colours the thumbs and the active
+track, and `color_end` colours the inactive remainder of the track.
+`thumb_icon` names a glyph drawn on the thumb, and `track_icon_start` and
+`track_icon_end` name glyphs drawn inside the track at its start and end.
+`value_label: true` shows the current value beside the thumb while the user
+drags it. These presentation members never change the logical value or the
+commit rule above.
+
+A `search_bar` is a text-valued stateful node holding a query. Its value is a
+string and defaults to the empty string. It publishes `state.changed` after
+each user edit under the same 500-millisecond debounce ceiling as
+`text_input`, and dispatches `on_change`, when present, after that
+notification with the string as `args.value`. It dispatches `on_search` once
+when the user submits the query, such as with the software keyboard's search
+action. Section 14.3 injects nothing into `on_search`, so under Section 14.1 a
+handler that depends on the submitted query MUST name the bar's `id` in
+`capture_fields`. `hint` is placeholder text shown while the query is empty.
+`leading_icon` and `trailing_icon` have their `text_input` meaning:
+non-interactive decorations that MUST NOT provide the only route to an action.
+
+Activating a `search_bar` expands it to reveal its `children`, the suggestions
+or results Emacs authors for the current query, and the platform's ordinary
+dismissal collapses it. `variant` is `full_screen` (default), where the
+expanded bar covers the surface, or `docked`, where the expanded content opens
+beneath the bar in place; an unknown value falls back to `full_screen`.
+Expansion is Companion-local presentation state, preserved across snapshots
+with the same Section 16.1 presentation identity and never reported.
+`children` are ordinary Nodes whose actions dispatch normally.
+
+A `dropdown` is a field whose `options` open in a popup anchored to the field.
+`editable` defaults to `false`. A non-editable dropdown is a single selection:
+its logical value is one option's `value`, which MUST appear in `options`; an
+omitted `value` means no selection and a captured value of `null`, and the
+Companion MUST NOT select the first option implicitly. The field shows the
+selected option's `label`, accepts no typed text, and is exposed to
+accessibility as read-only. With `editable: true` the field accepts text and
+its logical value is that string, which defaults to the empty string and need
+not match any option, exactly as `allow_add` relaxes `enum_list`. The
+`options` then act as suggestions: the Companion MAY narrow the presented
+options to those whose `label` contains the current text (the local
+containment filter that Section 14.6.1 disables), and picking one replaces the
+text with its `label`. `label` is the field's label and `hint` its placeholder
+while empty. A non-editable dropdown publishes `state.changed` after each
+settled selection, and an editable one after each user edit under the
+`text_input` debounce ceiling; `on_change`, when present, follows each such
+notification with the same value as `args.value`. `report_caret` defaults to
+`false`, has the meaning and editable-form exceptions of Section 14.6.1, and is
+ignored unless `editable` is true.
+
+A `segmented_button` presents its `options` as one connected row of segments,
+one per option in array order, each showing its `label` and optional `icon`.
+Its value schema and selection rules are those of an `enum_list` without
+`allow_add`: `multi_select` defaults to `false`; a single-select value is one
+option value and a multi-select value is an array of distinct option values;
+every selected value MUST appear in `options`; an omitted value means no
+selection (`null`) or `[]`; and the Companion MUST NOT select the first option
+implicitly. Selected segments are presented as checked. It publishes
+`state.changed` after each settled selection and dispatches `on_change`, when
+present, after that notification with the same value as `args.value`. The
+connected outline, seams, and selection motion are renderer-owned under
+Section 16.4.
+
+A `button_group` presents its `items` as a row of buttons in authored order. A
+`ButtonGroupItem` MUST contain `label` and `on_tap` and MAY contain `icon` and
+`enabled`; activating an enabled item dispatches its `on_tap` once.
+`button_group` carries `enabled` on each item rather than on the node: the rule
+at the head of this section applies to each item individually, with `enabled`
+defaulting to `true`. The Companion presents inline the items that fit its
+width and moves the rest, in order, into an overflow menu opened from a
+trailing control drawn with `overflow_icon`; omission selects the receiver's
+ordinary overflow glyph. The split is made at measurement time from a width
+Emacs never learns, and an item in the overflow menu MUST dispatch exactly the
+descriptor it would dispatch inline. Press feedback that visually couples
+neighbouring items is renderer-owned presentation.
 
 ### 17.5 Visualization nodes
 
@@ -3087,9 +3453,13 @@ unknown-node Companion renders it through Section 16.2.
 ### 17.6 Scaffold and application chrome
 
 A `scaffold` node has no required members and MAY contain `top_bar`, `body`,
-`bottom_bar`, `fab`, `floating_toolbar`, and `drawer` as Nodes;
-`snackbar: string`; `snackbar_action: {label, on_tap}`; and
-`on_refresh: ActionDescriptor`.
+`bottom_bar`, `fab`, `floating_toolbar`, `drawer`, `rail`, `sheet`,
+`top_bar_expanded`, `floating_toolbar_fab`, and `snackbar_content` as Nodes;
+`snackbar: string`; `snackbar_action: {label, on_tap}`;
+`on_refresh: ActionDescriptor`; and the members tabulated below, which give
+each one's type and default. `rail` is a slot on the start edge beside `body`, conventionally
+holding a `navigation_rail`; with Section 20.1.1 window advice, Emacs can fill
+either `bottom_bar` or `rail` from the same destinations.
 
 The Companion MUST dispatch a snackbar action only on a user tap, never on
 timeout. The Companion presents `snackbar` when an accepted snapshot introduces
@@ -3102,6 +3472,177 @@ identity: it is not a node and retains no local state.
 It MUST dispatch `on_refresh` only after a user refresh gesture. A
 drawer or bar is structural content and MUST NOT acquire hidden navigation
 behavior not declared by its nodes.
+
+| Member | Type | Default | Meaning |
+|---|---|---|---|
+| `top_bar_style` | `small` \| `center` \| `medium` \| `large` \| `medium_flexible` \| `large_flexible` \| `two_rows` | `small` | Presentation of the region holding `top_bar` |
+| `top_bar_subtitle` | string | — | Second line under a flexible style's title |
+| `top_bar_centered` | boolean | `false` | Centre a flexible style's title and subtitle |
+| `top_bar_expanded` | Node | — | `two_rows` content presented while the bar is expanded |
+| `top_bar_expanded_height`, `top_bar_collapsed_height` | dp | style default | Heights between which a flexible or `two_rows` bar folds |
+| `scroll_behavior` | `pinned` \| `enter_always` \| `exit_until_collapsed` | `pinned` | How the top bar responds to `body` scrolling |
+| `bottom_bar_behavior` | `pinned` \| `exit_always` | `pinned` | How the bottom bar responds to `body` scrolling |
+| `fab_position` | `end` \| `end_overlay` \| `center` | `end` | Placement of the `fab` slot |
+| `fab_hide_on_scroll` | boolean | `false` | Hide the `fab` slot while `body` is scrolled away from its start |
+| `drawer_variant` | `modal` \| `dismissible` \| `permanent` | `modal` | How `drawer` is hosted |
+| `floating_toolbar_orientation` | `horizontal` \| `vertical` | — | Present `floating_toolbar` as a floating toolbar of this orientation |
+| `floating_toolbar_placement` | `bottom_center` \| `bottom_start` \| `bottom_end` \| `center_start` \| `center_end` | receiver default | Where a floating toolbar rests |
+| `floating_toolbar_expanded` | boolean | `true` | Expanded or collapsed floating toolbar |
+| `floating_toolbar_fab` | Node | — | Floating action control paired with a floating toolbar |
+| `floating_toolbar_scroll` | boolean | `false` | A floating toolbar exits while `body` scrolls toward its end |
+| `floating_toolbar_exit_direction` | `bottom` \| `top` \| `start` \| `end` | nearest edge | Edge toward which a scrolling floating toolbar exits |
+| `refresh_indicator` | `default` \| `loading` \| `none` | `default` | Indicator drawn for the refresh gesture |
+| `is_refreshing` | boolean | — | Authored refresh-in-progress state |
+| `snackbar_duration` | `short` \| `long` \| `indefinite` | receiver default | How long a presented `snackbar` remains |
+| `snackbar_dismiss` | boolean | `false` | Draw an explicit dismiss control on the snackbar |
+| `snackbar_max_lines` | positive integer | — | Visible line clamp for `snackbar` |
+| `snackbar_content` | Node | — | Face drawn in place of the default snackbar face |
+| `sheet` | Node | — | Bottom-sheet slot |
+| `sheet_peek_height` | dp | — | Persistent sheet resting height; absence makes `sheet` modal |
+| `sheet_state` | `hidden` \| `partial` \| `expanded` | see below | Synced presentation state of `sheet` (§17.1) |
+| `on_sheet_change` | ActionDescriptor | — | Report of a user-settled `sheet_state` |
+
+`top_bar_style` is a toolkit-neutral presentation intent for the region
+holding `top_bar`, which supplies the bar's title content. `small` is a
+single-row bar and is the presentation of a scaffold without the member;
+`center` is a single-row bar with a centred title; and `medium` and `large` are
+bars whose larger title row collapses toward the single-row form as `body`
+scrolls. `medium_flexible` and `large_flexible` additionally take
+`top_bar_subtitle` and `top_bar_centered`. `two_rows` presents
+`top_bar_expanded` in place of `top_bar` while the bar is expanded and swaps to
+`top_bar` as it folds, so an expanded/collapsed content change crosses the wire
+as two authored Nodes and no collapse fraction is ever reported. A flexible or
+`two_rows` bar folds from `top_bar_expanded_height` to
+`top_bar_collapsed_height`; omitting either selects the style's receiver
+default. A style ignores the members it does not take: `top_bar_subtitle`,
+`top_bar_centered`, and the two heights outside the flexible and `two_rows`
+styles, and `top_bar_expanded` outside `two_rows`. An unknown `top_bar_style`
+falls back to `small` under Section 12 rule 6.
+
+`scroll_behavior`, `bottom_bar_behavior`, `fab_hide_on_scroll`,
+`floating_toolbar_scroll`, and `button.expanded: auto` (Section 17.4) are
+derived from the scroll position of `body` entirely within the Companion. They
+MUST NOT produce wire traffic, and an accepted snapshot does not reset the
+derived presentation. `pinned` keeps the top bar in place; `enter_always`
+scrolls it away as `body` scrolls toward its end and returns it on any scroll
+toward the start; and `exit_until_collapsed` collapses a collapsing style to
+its collapsed height and expands it only as `body` returns to its start.
+`bottom_bar_behavior: exit_always` hides the bottom bar as `body` scrolls toward
+its end and returns it on scroll toward the start. `fab_hide_on_scroll: true`
+hides whatever occupies `fab` while `body` is scrolled away from its start.
+Unknown `scroll_behavior` and `bottom_bar_behavior` values fall back to
+`pinned`. A bar or control hidden this way MUST return when the user scrolls
+`body` back toward its start, so it never becomes unreachable.
+
+`fab_position` is `end` (default), `center`, or `end_overlay`, which places the
+`fab` over the trailing end of `bottom_bar` rather than above it; an unknown
+value falls back to `end`. `drawer_variant` selects how the same `drawer` Node
+is hosted: `modal` (default) opens it over `body`; `dismissible` opens it
+beside `body` and leaves `body` live; and `permanent` presents it continuously
+beside `body`. A Companion that synthesizes a control opening the drawer under
+the other variants MUST NOT synthesize one for a permanent drawer, which has
+nothing to open. An unknown value falls back to `modal`.
+
+Without `floating_toolbar_orientation`, `floating_toolbar` is presented as a
+full-width band above `bottom_bar`, as it was before these members existed,
+and every other `floating_toolbar_*` member is ignored. With it,
+`floating_toolbar` is presented as a compact toolbar of that orientation
+floating over `body` at `floating_toolbar_placement`, where omission selects
+the receiver's default for the orientation, optionally paired with the
+`floating_toolbar_fab` Node. `floating_toolbar_expanded: false` requests the
+toolbar's collapsed form, whose reduced appearance is renderer-owned under
+Section 16.4. `floating_toolbar_scroll: true` lets the toolbar exit toward
+`floating_toolbar_exit_direction`, by default the edge nearest its placement,
+while `body` scrolls toward its end. An unknown value of
+`floating_toolbar_orientation`, `floating_toolbar_placement`, or
+`floating_toolbar_exit_direction` falls back to that member's omission.
+
+`refresh_indicator` and `is_refreshing` are meaningful only with `on_refresh`
+and are otherwise ignored. `refresh_indicator` is `default`, the receiver's
+ordinary refresh indicator; `loading`, the busy indicator of
+`progress.variant: loading`; or `none`, which draws no indicator while the
+gesture still dispatches `on_refresh`. An unknown value falls back to
+`default`. When present, `is_refreshing` is authored state: the indicator is
+shown while it is `true` and hidden once an accepted snapshot authors `false`,
+so Emacs rather than a timer ends the refresh; the Companion MAY show the
+indicator from the user's gesture until the next accepted snapshot. When
+`is_refreshing` is absent, how long the indicator remains after a gesture is
+receiver-owned.
+
+`snackbar_duration` is `short`, `long`, or `indefinite`; omission selects the
+receiver's default, and an unknown value falls back to omission. `short` and
+`long` remain subject to the four-second floor above, and `long` lasts longer
+than `short`. An `indefinite` snackbar remains until the user dismisses it or
+an accepted snapshot dismisses or replaces it, and therefore always presents
+an explicit dismiss control, which `snackbar_dismiss: true` requests for the
+other durations. `snackbar_max_lines` clamps the visible message to that many
+lines; the accessible text remains the complete `snackbar`. `snackbar_content`
+is a Node drawn in place of the whole default snackbar face, including its
+message and any `snackbar_action`, while the Companion keeps presentation,
+timing, and dismissal. It is presented only when `snackbar` presents it, and
+`snackbar` remains the message and accessible text, so an author repeats that
+text inside the face; actions inside the face dispatch as ordinary node
+actions.
+
+`sheet` is a bottom-sheet slot reachable from the one authored tree, distinct
+from `dialog.show`. With `sheet_peek_height`, the sheet is persistent: it rests
+at that height in the `partial` state and can be dragged to `expanded`.
+Without it, the sheet is modal and is presented only while `sheet_state` is
+`partial` or `expanded`. `sheet_state` is synced presentation state (Section
+17.1) whose default is `partial` for a persistent sheet and `hidden` for a
+modal one; an unknown value falls back to that default under Section 12 rule 6.
+When the user settles the sheet in another state — by dragging it, or by
+dismissing a modal sheet to `hidden` — the Companion dispatches
+`on_sheet_change`, when present, once with the settled state string as
+`args.value` (Section 14.3) and holds that state under the synced-state rule,
+so re-pushing an unchanged snapshot cannot reopen a sheet under the user's
+finger. `sheet_peek_height`, `sheet_state`, and `on_sheet_change` are ignored
+without `sheet`.
+
+| `t` | Required members | Optional members and semantics |
+|---|---|---|
+| `navigation_rail` | `items: RailItem[]` | `variant`, `expanded`, `arrangement`, `header`, `hide_on_collapse`, `on_expand_change`. `variant`: `standard` (default), `wide`, or `modal`. |
+| `pane_scaffold` | `list: Node`, `detail: Node` | `extra`, `variant`. `variant`: `list_detail` (default) or `supporting`. |
+
+A `navigation_rail` is a vertical strip of application destinations at the
+start edge, conventionally placed in `scaffold.rail`. A `RailItem` MUST contain
+`label`, `icon`, and `on_tap` and MAY contain `selected` (boolean, default
+`false`), `badge`, and `enabled` (default `true`); activating an enabled item
+dispatches its `on_tap` once. `selected` is authored presentation state exactly
+like `chip.selected`: the Companion MUST NOT move the selection locally, and
+Emacs re-authors it after handling the action. `header` is a Node drawn above
+the items, such as a menu control or a floating action control, and
+`arrangement` places the item group at the `top` (default), `center`, or
+`bottom` of the rail. Unknown `variant` and `arrangement` values fall back to
+`standard` and `top` under Section 12 rule 6.
+
+`standard` is a narrow rail with each label beneath its icon; `wide` can expand
+to present labels beside icons; and `modal` is a narrow rail that expands into
+an overlay above the content. `navigation_rail.expanded` is a boolean, default
+`false`; the `auto` form is defined only for `button`. It is synced
+presentation state (Section 17.1), meaningful for `wide` and `modal` and
+ignored for `standard`, and a changed authored value animates the rail to the
+new state. When the user expands or collapses the rail locally, for example by
+dismissing a modal rail's overlay, the Companion dispatches
+`on_expand_change`, when present, once with the settled boolean as
+`args.value` (Section 14.3). `hide_on_collapse: true`, meaningful only for
+`modal`, keeps the collapsed rail entirely off screen; Emacs SHOULD then author
+another control that expands it.
+
+A `pane_scaffold` presents up to three panes: the primary `list`, the
+secondary `detail`, and the optional tertiary `extra`. `variant` assigns their
+roles and does not change the layout rules: under `list_detail`, `list` offers
+items and `detail` presents the content for the current item; under
+`supporting`, `list` is the main content and `detail` supports it. An unknown
+value falls back to `list_detail`. The Companion decides from its own window
+geometry how many panes are presented side by side; panes presented together
+appear from start to end in the order `list`, `detail`, `extra`. When fewer
+panes fit than are authored, the Companion presents `list` first and MUST keep
+every authored pane reachable through Companion-local navigation, such as
+revealing another pane on a local gesture and returning on the platform back
+gesture. Pane navigation is presentation state: it dispatches no action and
+produces no wire traffic. Each pane's root SHOULD carry `semantics.pane_title`
+(Section 16.5.1).
 
 The `badge` member MAY appear on an icon or navigation control as either a
 string or number. A number above the platform's visual limit MAY display as
