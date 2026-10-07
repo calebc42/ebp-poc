@@ -1519,14 +1519,17 @@ On successful `auth.response`, the Companion returns:
     "max_input_state_bytes": 1048576,
     "max_capture_fields": 64,
     "max_dialogs": 4
-  }
+  },
+  "locale": {"tag": "de-DE", "hour_cycle": "h23", "time_zone": "Europe/Berlin"}
 }
 ```
 
 The result MUST contain `server_proof`, `protocol`, `server`, `granted`,
 `surface_profiles`, `surfaces`, `queued_events`, and `limits`.
 `input_state` MUST be omitted when empty. `device` MUST be omitted unless
-`capabilities` or `triggers` was granted.
+`capabilities` or `triggers` was granted. `window` (Section 20.1.1) and
+`locale` (Section 20.1.2) are OPTIONAL mirrors of the Companion's latest
+presentation advice and are omitted while that advice is unknown.
 
 The welcome members have these schemas:
 
@@ -1542,6 +1545,8 @@ The welcome members have these schemas:
 | `input_state` | object mapping present Surface IDs to objects mapping stateful node IDs to their latest non-password JSON values |
 | `limits` | limits object defined in Section 4.5 |
 | `device` | device report defined in Section 20.1 |
+| `window` | the latest Section 20.1.1 window geometry object, when known |
+| `locale` | the latest Section 20.1.2 locale object, when known |
 
 Every `input_state` value MUST have the JSON type required by its node type and
 MUST fit `max_field_bytes`, and the complete object MUST fit
@@ -1714,6 +1719,7 @@ means `READY`.
 | `theme.set` | Emacs | notification | S, R | `theme` | 18 |
 | `reminders.set` | Emacs | request | S, R | `reminders.owner` | 18 |
 | `window.changed` | Companion | notification | S, R | core | 20 |
+| `locale.changed` | Companion | notification | S, R | core | 20 |
 | `edit.open` | Companion | notification | R | `editor.sync` | 19 |
 | `edit.delta` | Companion | notification | R | `editor.sync` | 19 |
 | `edit.caret` | Companion | notification | R | `editor.sync` | 19 |
@@ -4717,6 +4723,29 @@ the geometry is already known, so the FIRST snapshot can be authored for the
 right class. Emacs uses it to choose between layout forms — a bottom bar
 against a `scaffold.rail` — and MUST treat it as presentation advice, never
 as an event.
+
+#### 20.1.2 `locale.changed`
+
+The Companion reports the device's presentation locale with the
+`locale.changed` notification: `{tag, hour_cycle, time_zone}`. `tag` is a
+BCP 47 language tag of at most 64 UTF-8 octets matching
+`^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$`; `hour_cycle` is `h12` or `h23`
+(`enums."locale.hour_cycle"`), the clock cycle the device presents times in;
+`time_zone` is an IANA time-zone identifier of at most 64 octets matching
+`^[A-Za-z0-9_+./-]+$`. All three members are REQUIRED and the object is closed.
+The notification MAY be sent once after authentication when the facts are
+known and MUST be sent again whenever any member changes; it MUST NOT be
+re-sent for an unchanged object. The same object is mirrored as the OPTIONAL
+`locale` member of the `auth.response` welcome when it is already known, so
+the FIRST snapshot can be authored for the device's clock and zone. Emacs uses
+it to author the display strings the device shows — a `date_stamp`, a
+`time_button` label, a "today" — for the device's clock cycle and civil day,
+and MUST treat it as presentation advice, never as an event; when the object
+is absent Emacs MUST fall back to its own locale. The Companion still
+evaluates nothing: it reports facts, and every display string stays authored
+(Sections 17.2 and 23.2). The object is device data of the Section 20.1 class
+and is subject to the same logging discipline as the device report
+(Section 23.3). `contract.json` projects the grammar as `locale_schema`.
 
 ### 20.2 `capability.invoke`
 

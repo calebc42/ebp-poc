@@ -78,6 +78,7 @@ UNBINDABLE_MEMBERS = set(DATA_SCHEMA.get("unbindable_members", []))
 UNBINDABLE_TAGS = set(DATA_SCHEMA.get("unbindable_tags", []))
 # Amendment #195 (SPEC 13.8.5): templates expanded over bound arrays.
 TEMPLATE_SCHEMA = DATA_SCHEMA.get("template", {})
+LOCALE_SCHEMA = contract.get("locale_schema", {})
 MAX_TEMPLATE_ITEMS = contract["limits"]["fixed"].get("max_template_items", 0)
 TEMPLATE_MAX_NESTING = TEMPLATE_SCHEMA.get("max_nesting", 0)
 TEMPLATE_FORBIDDEN_TYPES = set(
@@ -198,6 +199,29 @@ def check_contract():
     if "data" not in METHODS.get("surface.update", {}).get(
             "params", {}).get("optional", []):
         problem("contract.json: `surface.update` must admit optional `data`")
+    # Amendment #197: the locale advice is one notification, one welcome
+    # mirror, one enum and one closed grammar.
+    locale_method = METHODS.get("locale.changed", {})
+    if locale_method.get("class") != "notification" or \
+            locale_method.get("sender") != "companion" or \
+            locale_method.get("params", {}).get("required") != \
+            LOCALE_SCHEMA.get("required") or \
+            LOCALE_SCHEMA.get("required") != ["tag", "hour_cycle", "time_zone"]:
+        problem("contract.json: `locale.changed` must be a Companion "
+                "notification requiring tag, hour_cycle, time_zone "
+                "(amendment #197)")
+    if LOCALE_SCHEMA.get("welcome_member") != "locale" or \
+            LOCALE_SCHEMA.get("notification") != "locale.changed":
+        problem("contract.json: locale_schema must name the `locale` welcome "
+                "member and `locale.changed`")
+    welcome_optional = METHODS.get("auth.response", {}).get(
+        "result", {}).get("optional", [])
+    for member in ("window", "locale"):
+        if member not in welcome_optional:
+            problem(f"contract.json: `auth.response` result must admit the "
+                    f"optional `{member}` mirror (SPEC 10.2)")
+    if ENUMS.get(LOCALE_SCHEMA.get("hour_cycle_enum", "")) != ["h12", "h23"]:
+        problem("contract.json: enums.locale.hour_cycle must be [h12, h23]")
     for name, expected in {
             "max_data_bytes": 1048576, "max_data_depth": 32,
             "max_pointer_bytes": 512, "max_pointer_segments": 32,
@@ -429,7 +453,7 @@ ENUMS = contract.get("enums", {})
 NON_NODE_ENUM_DOMAINS = {
     "dialog.style", "notification.priority", "diagnostic.severity",
     "toolbar.placement", "tab_item.icon_position", "theme.layout_direction",
-    "window.size_class", "snackbar.result", "canvas.op",
+    "window.size_class", "locale.hour_cycle", "snackbar.result", "canvas.op",
 }
 
 
@@ -1483,6 +1507,35 @@ def check_widget_surface(spec, path: str):
 
 
 # ------------------------------------------------------------- frames -------
+def check_locale_object(obj, path: str):
+    """SPEC 20.1.2: the `{tag, hour_cycle, time_zone}` locale object, as the
+    `locale.changed` params and the welcome's `locale` mirror."""
+    if not isinstance(obj, dict):
+        problem(f"{path}: locale object must be an object (SPEC 20.1.2)")
+        return
+    required = LOCALE_SCHEMA.get("required", [])
+    for member in required:
+        if member not in obj:
+            problem(f"{path}: locale object missing `{member}`")
+    for member in obj:
+        if member not in required:
+            problem(f"{path}: unknown locale member `{member}`")
+    tag = obj.get("tag")
+    if not isinstance(tag, str) or \
+            len(tag.encode("utf-8")) > LOCALE_SCHEMA.get("tag_max_bytes", 64) or \
+            not re.fullmatch(LOCALE_SCHEMA.get("tag_pattern", ""), tag):
+        problem(f"{path}.tag: not a BCP 47 tag within locale_schema")
+    cycle = obj.get("hour_cycle")
+    if cycle not in ENUMS.get(LOCALE_SCHEMA.get("hour_cycle_enum", ""), []):
+        problem(f"{path}.hour_cycle: not in enums.locale.hour_cycle")
+    zone = obj.get("time_zone")
+    if not isinstance(zone, str) or \
+            len(zone.encode("utf-8")) > \
+            LOCALE_SCHEMA.get("time_zone_max_bytes", 64) or \
+            not re.fullmatch(LOCALE_SCHEMA.get("time_zone_pattern", ""), zone):
+        problem(f"{path}.time_zone: not an IANA zone id within locale_schema")
+
+
 def check_params(method: str, params, path: str):
     entry = METHODS[method]
     if not isinstance(params, dict):
@@ -1516,6 +1569,9 @@ def check_params(method: str, params, path: str):
                         if m not in contract["syntax_style"]:
                             problem(f"{path}: SyntaxStyle member `{m}` "
                                     f"on `{role}` is unregistered")
+    # Amendment #197: device locale advice has a closed grammar.
+    if method == "locale.changed":
+        check_locale_object(params, path)
     # Structured members ride the node/action validators.
     if method == "surface.data":
         check_data_ops(params, path)

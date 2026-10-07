@@ -1674,6 +1674,10 @@
       "medium",
       "expanded"
     ],
+    "locale.hour_cycle": [
+      "h12",
+      "h23"
+    ],
     "snackbar.result": [
       "dismissed",
       "action"
@@ -1908,7 +1912,9 @@
         ],
         "optional": [
           "input_state",
-          "device"
+          "device",
+          "window",
+          "locale"
         ]
       },
       "errors": [
@@ -2649,6 +2655,23 @@
         "optional": []
       }
     },
+    "locale.changed": {
+      "sender": "companion",
+      "class": "notification",
+      "states": [
+        "SYNCING",
+        "READY"
+      ],
+      "capability": "core",
+      "params": {
+        "required": [
+          "tag",
+          "hour_cycle",
+          "time_zone"
+        ],
+        "optional": []
+      }
+    },
     "snackbar.show": {
       "sender": "emacs",
       "class": "request",
@@ -3165,6 +3188,20 @@
         "max_remote_views_bytes": "positive-integer"
       }
     }
+  },
+  "locale_schema": {
+    "welcome_member": "locale",
+    "notification": "locale.changed",
+    "required": [
+      "tag",
+      "hour_cycle",
+      "time_zone"
+    ],
+    "tag_pattern": "^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$",
+    "tag_max_bytes": 64,
+    "hour_cycle_enum": "locale.hour_cycle",
+    "time_zone_pattern": "^[A-Za-z0-9_+./-]+$",
+    "time_zone_max_bytes": 64
   },
   "widget_size_variant_schema": {
     "required": [
