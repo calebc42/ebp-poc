@@ -27,7 +27,7 @@ implementations follow.
 | [`validate.py`](validate.py) | Stdlib-only self-check and reference conformance harness: goldens against `contract.json`, `contract.json` against SPEC §8/§11, wire fixtures through a reference decoder at varied chunk sizes (including one octet at a time), and the §9.3 HMAC known-answer vector. Run by this repo's CI. |
 | [`conformance/`](conformance/) | Deterministic, implementation-neutral corpus generators and reference replayers shared by endpoint implementations. The text-input corpus is fixed at seed 20260828 and 10,000 cases. |
 | [`SPEC-CHANGES.md`](SPEC-CHANGES.md) | The amendment log. Every normative change lands with one entry here (date, section, change, fixtures regenerated, reviewer). No entry, no amendment. |
-| [`slop-docs/`](slop-docs/) | The slop line's drafting kits and precedent surveys (JSON-RPC conversion, WebSocket transport, transport profiles, the `emacs-unix` profile and the Android agent, the LiveView harvest, the json-render harvest) — the provenance documents SPEC-2's status block and §16 cite. Informative only — not part of the contract surface. |
+| [`slop-docs/`](slop-docs/) | The slop line's drafting kits and precedent surveys (JSON-RPC conversion, WebSocket transport, transport profiles, the `emacs-unix` profile and the Android agent, the LiveView harvest, the json-render harvest, the shadcn harvest) — the provenance documents SPEC-2's status block and §16 cite. Informative only — not part of the contract surface. |
 
 ## Versioning
 
