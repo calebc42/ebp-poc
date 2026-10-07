@@ -236,6 +236,12 @@ def check_contract():
             TEMPLATE_SCHEMA.get("injection") != "item":
         problem("contract.json: data_model_schema.template must bind key, "
                 "cap max_template_items, nest 4 deep and inject item")
+    insert = DATA_SCHEMA.get("ops", {}).get("insert", {})
+    if insert.get("required") != ["op", "path", "value"] or \
+            DATA_SCHEMA.get("ops", {}).get("insert_feature") != "data.insert" or \
+            "data.insert" not in contract.get("features", []):
+        problem("contract.json: the insert DataOp and feature data.insert "
+                "must be registered (amendment #196)")
     if ACTIONS.get("scope_injections", {}).get("template_item") != ["item"]:
         problem("contract.json: actions.scope_injections.template_item must "
                 "be [item] (14.3)")
@@ -2060,8 +2066,8 @@ def check_data_ops(params: dict, path: str):
             continue
         kind = op.get("op")
         shape = shapes.get(kind) if isinstance(kind, str) else None
-        if shape is None:
-            problem(f"{opath}.op: must be `set` or `remove`")
+        if not isinstance(shape, dict):
+            problem(f"{opath}.op: must be `set`, `remove` or `insert`")
             continue
         allowed = set(shape["required"]) | set(shape["optional"])
         for member in shape["required"]:
@@ -2079,6 +2085,114 @@ def check_data_ops(params: dict, path: str):
             if kind != "set" or not isinstance(op.get("value"), dict):
                 problem(f"{opath}.path: the empty pointer is admitted only "
                         "for a `set` whose value is an object")
+
+
+def _container(document, tokens, path):
+    """The container the last token addresses; MaterializeError if absent."""
+    found, parent = resolve_pointer(document, tokens[:-1], path)
+    if not found or not isinstance(parent, (dict, list)):
+        raise MaterializeError(path, "parent container does not exist")
+    return parent
+
+
+def _index(token, path, limit):
+    """SPEC 13.8.2 array index no greater than `limit`."""
+    if not _INDEX_RE.match(token):
+        raise MaterializeError(
+            path, "array index must be a decimal without leading zeros")
+    index = int(token)
+    if index > limit:
+        raise MaterializeError(path, "array index exceeds the length")
+    return index
+
+
+def apply_ops(document, ops, path: str = "ops"):
+    """SPEC 13.8.4: the reference DataOp applier (set, remove, insert).
+
+    Returns the new document (the input is not modified) or raises
+    MaterializeError at `ops[i].path`/`ops[i].op` — the same paths a
+    Companion reports."""
+    import copy
+    doc = copy.deepcopy(document)
+    for i, op in enumerate(ops):
+        opath = f"{path}[{i}]"
+        if not isinstance(op, dict):
+            raise MaterializeError(opath, "DataOp must be an object")
+        kind = op.get("op")
+        shape = DATA_SCHEMA.get("ops", {}).get(kind) \
+            if isinstance(kind, str) else None
+        if not isinstance(shape, dict):
+            raise MaterializeError(f"{opath}.op", "must be set, remove or insert")
+        for member in op:
+            if member not in set(shape["required"]) | set(shape["optional"]):
+                raise MaterializeError(f"{opath}.{member}",
+                                       "unknown DataOp member")
+        for member in shape["required"]:
+            if member not in op:
+                raise MaterializeError(opath, f"{kind} requires {member}")
+        ppath = f"{opath}.path"
+        _, tokens = parse_pointer(op.get("path"), ppath)
+        if not tokens:
+            if kind == "set" and isinstance(op["value"], dict):
+                doc = copy.deepcopy(op["value"])
+                continue
+            raise MaterializeError(ppath, "the empty pointer is admitted only "
+                                          "for a set whose value is an object")
+        parent = _container(doc, tokens, ppath)
+        last = tokens[-1]
+        value = copy.deepcopy(op.get("value"))
+        if kind == "set":
+            if isinstance(parent, dict):
+                parent[last] = value
+            else:
+                index = _index(last, ppath, len(parent))
+                if index == len(parent):
+                    parent.append(value)
+                else:
+                    parent[index] = value
+        elif kind == "remove":
+            if isinstance(parent, dict):
+                if last not in parent:
+                    raise MaterializeError(ppath, "nothing to remove")
+                del parent[last]
+            else:
+                index = _index(last, ppath, len(parent))
+                if index == len(parent):
+                    raise MaterializeError(ppath, "nothing to remove")
+                del parent[index]
+        else:  # insert (amendment #196)
+            if not isinstance(parent, list):
+                raise MaterializeError(ppath, "insert requires an array parent")
+            parent.insert(_index(last, ppath, len(parent)), value)
+    return doc
+
+
+def check_data_ops_vectors() -> int:
+    """goldens/data-ops.golden: {data, ops, expect} known answers (SPEC 24.5)."""
+    vectors = 0
+    for n, line in enumerate(golden_lines("data-ops.golden")):
+        vector = json.loads(line)
+        vpath = f"data-ops:{n:02d}"
+        expect = vector.get("expect", {})
+        try:
+            result, failure = apply_ops(vector["data"], vector["ops"]), None
+        except MaterializeError as error:
+            result, failure = None, error.path
+        if "data" in expect:
+            if failure is not None:
+                problem(f"{vpath}: expected a document, got rejection at "
+                        f"{failure}")
+            elif result != expect["data"]:
+                problem(f"{vpath}: the result differs from the known answer: "
+                        f"{json.dumps(result, sort_keys=True)}")
+        elif "reject" in expect:
+            if failure != expect["reject"]:
+                problem(f"{vpath}: expected rejection at {expect['reject']}, "
+                        f"got {failure!r}")
+        else:
+            problem(f"{vpath}: expect must carry `data` or `reject`")
+        vectors += 1
+    return vectors
 
 
 def check_data_vectors() -> int:
@@ -2792,6 +2906,7 @@ def main() -> int:
     semantics = check_semantics_goldens()
     text_inputs = check_text_input_goldens()
     data_vectors = check_data_vectors()
+    data_op_vectors = check_data_ops_vectors()
 
     # Coverage floors: the corpus really covers the vocabulary.
     covered = {json.loads(line).get("t")
@@ -2816,7 +2931,7 @@ def main() -> int:
           f"nodes, {wire} wire fixtures x3 chunkings, "
           f"{editor} editor splice cases, {semantics} semantics witnesses, "
           f"{text_inputs} text-input witnesses, {data_vectors} data "
-          f"vectors validate "
+          f"vectors, {data_op_vectors} data-op vectors validate "
           f"(spec {contract['spec_version']}, "
           f"format {contract['contract_format']}); "
           f"SPEC §8/§11 in sync; 9.3 KAT reproduced")

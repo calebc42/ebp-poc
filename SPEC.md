@@ -2232,14 +2232,24 @@ resending its tree. Its params are:
 | `revision` | non-negative integer | yes | Revision of this mutation, in the surface's ordinary revision space |
 | `ops` | array of DataOp | yes | One through `max_data_ops` operations, applied in order |
 
-A DataOp is `{"op":"set","path":<pointer>,"value":<any JSON>}` or
-`{"op":"remove","path":<pointer>}`, with no other member. `set` replaces the
-value the pointer reaches, or creates it when the final token names an absent
-object member or the index equal to an array's length; the parent container
-MUST exist. `remove` deletes the value the pointer reaches, which MUST exist;
-removing an array element shifts the elements after it. The empty pointer is
-admitted only for `set`, whose `value` MUST then be an object: it replaces the
-whole document.
+A DataOp is `{"op":"set","path":<pointer>,"value":<any JSON>}`,
+`{"op":"remove","path":<pointer>}`, or
+`{"op":"insert","path":<pointer>,"value":<any JSON>}`, with no other member.
+`set` replaces the value the pointer reaches, or creates it when the final
+token names an absent object member or the index equal to an array's length;
+the parent container MUST exist. `remove` deletes the value the pointer
+reaches, which MUST exist; removing an array element shifts the elements after
+it. `insert` (amendment #196) adds `value` to an array before the index its
+final token names, shifting that element and every later one; the parent
+MUST be an array and the index MUST NOT exceed its length, an index equal to
+the length appending. An `insert` whose parent is not an array, whose index
+exceeds the length, or whose pointer is empty is content-invalid at its
+`path`. The empty pointer is admitted only for `set`, whose `value` MUST then
+be an object: it replaces the whole document.
+
+A sender MUST NOT send `insert` unless the target profile advertises the
+`data.insert` feature (Section 22.4); without it, an insertion is a `set` of
+the containing array.
 
 The Companion MUST validate the entire request — every pointer, the resulting
 document against Section 13.8.1, and the re-materialized snapshot against
@@ -5404,6 +5414,7 @@ absent.
 | `editor.candidate_kind` | a Section 19.3 completion candidate carrying `kind` | omit the `kind` member from every candidate |
 | `action.open_surface` | a remote ActionDescriptor carrying `open_surface` (Section 14.1) | omit the `open_surface` member |
 | `data.template` | a node carrying `template` and `bind.children` (Section 13.8.5) | expand the template in Emacs and send literal `children` |
+| `data.insert` | a Section 13.8.4 DataOp whose `op` is `insert` | send a `set` of the containing array instead |
 
 A feature name is a Section 4.4 identifier. A receiver MUST ignore an
 unrecognized `features` entry. A new constraining or member-gating feature
@@ -5727,6 +5738,12 @@ encoder conformance test MUST verify the exact framing syntax and byte count,
 then compare the parsed JSON body semantically. It MUST NOT require arbitrary
 JSON object-member order or escaping choices unless canonical JSON is added as
 a separate normative rule.
+
+`goldens/data-ops.golden` is the DataOp corpus for Section 13.8.4: JSON-line
+known-answer vectors, each a `data` document, an `ops` array, and either the
+exact resulting document or the `ops[i].path` at which the request is
+rejected. A Companion claiming `data.model` MUST reproduce every vector whose
+operations it admits; one advertising `data.insert` MUST reproduce them all.
 
 `goldens/data.golden` is the materialization corpus for Section 13.8: JSON-line
 known-answer vectors, each a `spec`, a `data` document, and either the exact

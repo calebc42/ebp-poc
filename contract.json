@@ -3081,7 +3081,8 @@
     "toolbar.*",
     "editor.candidate_kind",
     "action.open_surface",
-    "data.template"
+    "data.template",
+    "data.insert"
   ],
   "candidate_schema": {
     "required": [
@@ -3237,7 +3238,16 @@
         ],
         "optional": []
       },
-      "max_ops_limit": "max_data_ops"
+      "insert": {
+        "required": [
+          "op",
+          "path",
+          "value"
+        ],
+        "optional": []
+      },
+      "max_ops_limit": "max_data_ops",
+      "insert_feature": "data.insert"
     },
     "unbindable_members": [
       "t",
