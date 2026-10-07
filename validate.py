@@ -79,6 +79,17 @@ UNBINDABLE_TAGS = set(DATA_SCHEMA.get("unbindable_tags", []))
 # Amendment #195 (SPEC 13.8.5): templates expanded over bound arrays.
 TEMPLATE_SCHEMA = DATA_SCHEMA.get("template", {})
 LOCALE_SCHEMA = contract.get("locale_schema", {})
+# Amendment #198: conditional nodes.
+VISIBLE_SCHEMA = DATA_SCHEMA.get("visible", {})
+VISIBLE_OP_VALUE = {
+    **{op: None for op in VISIBLE_SCHEMA.get("ops", {}).get("no_value", [])},
+    **{op: "scalar" for op in VISIBLE_SCHEMA.get("ops", {}).get("scalar_value", [])},
+    **{op: "number" for op in VISIBLE_SCHEMA.get("ops", {}).get("number_value", [])},
+}
+MAX_VISIBLE_PER_NODE = contract["limits"]["fixed"].get(
+    "max_visible_predicates_per_node", 0)
+MAX_VISIBLE_PER_SNAPSHOT = contract["limits"]["fixed"].get(
+    "max_visible_predicates_per_snapshot", 0)
 MAX_TEMPLATE_ITEMS = contract["limits"]["fixed"].get("max_template_items", 0)
 TEMPLATE_MAX_NESTING = TEMPLATE_SCHEMA.get("max_nesting", 0)
 TEMPLATE_FORBIDDEN_TYPES = set(
@@ -222,6 +233,38 @@ def check_contract():
                     f"optional `{member}` mirror (SPEC 10.2)")
     if ENUMS.get(LOCALE_SCHEMA.get("hour_cycle_enum", "")) != ["h12", "h23"]:
         problem("contract.json: enums.locale.hour_cycle must be [h12, h23]")
+    # Amendment #198: conditional nodes are one universal attribute, one
+    # field type, one enum, one feature and two limits, all named by
+    # data_model_schema.visible.
+    visible = VISIBLE_SCHEMA
+    if visible.get("feature") != "data.visible" or \
+            "data.visible" not in contract.get("features", []) or \
+            visible.get("attribute") != "visible_when" or \
+            "visible_when" not in UNIVERSAL or \
+            FIELD_TYPES.get("visible_when") != "visible-when-array" or \
+            "visible_when" not in UNBINDABLE_MEMBERS:
+        problem("contract.json: `visible_when` must be an unbindable universal "
+                "attribute typed visible-when-array under feature data.visible "
+                "(amendment #198)")
+    registered = ENUMS.get("visible.op", [])
+    if not registered or set(VISIBLE_OP_VALUE) != set(registered) or \
+            len(registered) != len(set(registered)):
+        problem("contract.json: enums.visible.op must equal the union of "
+                "data_model_schema.visible.ops")
+    template_forbidden = DATA_SCHEMA.get("template", {}).get("forbidden_inside", {})
+    visible_forbidden = visible.get("forbidden_inside", {})
+    if visible.get("placement") != "children" or \
+            visible.get("siblings_must_key") is not True or \
+            visible.get("admitted_in") != ["app"] or \
+            visible_forbidden.get("descriptor_members") != [] or \
+            any(visible_forbidden.get(k) != template_forbidden.get(k)
+                for k in ("members", "node_types", "stateful")):
+        problem("contract.json: data_model_schema.visible placement rules "
+                "drifted from SPEC 13.8.6")
+    if fixed.get(visible.get("max_per_node_limit", "")) != 8 or \
+            fixed.get(visible.get("max_per_snapshot_limit", "")) != 10000:
+        problem("contract.json: the visible_when limits must be 8 per node "
+                "and 10000 per snapshot")
     for name, expected in {
             "max_data_bytes": 1048576, "max_data_depth": 32,
             "max_pointer_bytes": 512, "max_pointer_segments": 32,
@@ -453,7 +496,7 @@ ENUMS = contract.get("enums", {})
 NON_NODE_ENUM_DOMAINS = {
     "dialog.style", "notification.priority", "diagnostic.severity",
     "toolbar.placement", "tab_item.icon_position", "theme.layout_direction",
-    "window.size_class", "locale.hour_cycle", "snackbar.result", "canvas.op",
+    "window.size_class", "locale.hour_cycle", "visible.op", "snackbar.result", "canvas.op",
 }
 
 
@@ -1580,24 +1623,26 @@ def check_params(method: str, params, path: str):
         if method == "surface.update":
             # Amendment #194: bindings resolve before the walk (SPEC 13.8.3).
             if "data" in params or find_bind(spec, "") is not None or \
-                    find_member(spec, "", "template") is not None:
+                    find_member(spec, "", "template") is not None or \
+                    find_member(spec, "", "visible_when") is not None:
                 try:
                     spec = materialize(spec, params.get("data", {}),
                                        f"{path}.spec", f"{path}.data")
                 except MaterializeError as error:
                     problem(f"{error.path}: {error.reason}")
                     return
-            for member in ("bind", "template"):
+            for member in ("bind", "template", "visible_when"):
                 stale = find_member(params.get("stale_spec"),
                                     f"{path}.stale_spec", member)
                 if stale is not None:
                     problem(f"{stale}: stale_spec MUST NOT carry {member} "
-                            "(SPEC 13.8.1, 13.8.5)")
+                            "(SPEC 13.8.1, 13.8.5, 13.8.6)")
         else:
-            templated = find_member(spec, f"{path}.spec", "template")
-            if templated is not None:
-                problem(f"{templated}: a dialog document MUST NOT carry "
-                        "template (SPEC 13.8.5)")
+            for member in ("template", "visible_when"):
+                found = find_member(spec, f"{path}.spec", member)
+                if found is not None:
+                    problem(f"{found}: a dialog document MUST NOT carry "
+                            f"{member} (SPEC 13.8.5, 13.8.6)")
         if isinstance(spec, dict) and "views" in spec:
             views = spec["views"]
             if isinstance(views, dict):
@@ -1911,10 +1956,156 @@ def materialize(spec, data, spec_path: str, data_path: str):
         raise MaterializeError(
             data_path, f"exceeds max_data_bytes ({MAX_DATA_BYTES})")
     count = 0
+    predicates = 0
     # SPEC 13.8.5: an item scope is the element a copy resolves relative
     # pointers from; `_PROBE` marks the single check of a template whose
     # array is empty, where relatively bound members are present-but-unknown.
     _PROBE = object()
+
+    def is_forbidden_type(node_type, value):
+        return node_type in TEMPLATE_FORBIDDEN_TYPES or \
+            node_type in VARIANT_FORBIDDEN_STATEFUL or \
+            (node_type in {"button", "icon_button"} and "checked" in value)
+
+    def check_visible_shape(node, path, scope):
+        """SPEC 13.8.6: the closed predicate grammar, at the authored path.
+        Returns the parsed predicates for evaluation."""
+        nonlocal predicates
+        preds = node["visible_when"]
+        vpath = f"{path}.visible_when"
+        if not isinstance(preds, list) or not preds:
+            raise MaterializeError(
+                vpath, "visible_when must be a non-empty array of predicates "
+                       "(SPEC 13.8.6)")
+        if len(preds) > MAX_VISIBLE_PER_NODE:
+            raise MaterializeError(
+                vpath, "exceeds max_visible_predicates_per_node "
+                       f"({MAX_VISIBLE_PER_NODE})")
+        parsed = []
+        for i, pred in enumerate(preds):
+            ppath = f"{vpath}[{i}]"
+            predicates += 1
+            if predicates > MAX_VISIBLE_PER_SNAPSHOT:
+                raise MaterializeError(
+                    ppath, "exceeds max_visible_predicates_per_snapshot "
+                           f"({MAX_VISIBLE_PER_SNAPSHOT})")
+            if not isinstance(pred, dict):
+                raise MaterializeError(ppath, "a predicate must be an object")
+            for member in pred:
+                if member not in ("path", "op", "value"):
+                    raise MaterializeError(f"{ppath}.{member}",
+                                           "unknown predicate member")
+            if "path" not in pred:
+                raise MaterializeError(f"{ppath}.path",
+                                       "a predicate requires path")
+            op = pred.get("op")
+            if not isinstance(op, str) or op not in VISIBLE_OP_VALUE:
+                raise MaterializeError(f"{ppath}.op",
+                                       "unregistered predicate op")
+            takes = VISIBLE_OP_VALUE[op]
+            if takes is None:
+                if "value" in pred:
+                    raise MaterializeError(f"{ppath}.value",
+                                           f"`{op}` takes no value")
+            else:
+                if "value" not in pred:
+                    raise MaterializeError(f"{ppath}.value",
+                                           f"`{op}` requires a value")
+                operand = pred["value"]
+                if takes == "number":
+                    if not _is_number(operand):
+                        raise MaterializeError(
+                            f"{ppath}.value", f"`{op}` requires a finite number")
+                elif not (isinstance(operand, (str, bool)) or _is_number(operand)):
+                    raise MaterializeError(
+                        f"{ppath}.value",
+                        f"`{op}` requires a string, number or boolean")
+            absolute, tokens = parse_pointer(pred["path"], f"{ppath}.path",
+                                             scope is not None)
+            parsed.append((absolute, tokens, op, pred.get("value")))
+        return parsed
+
+    def json_type(value):
+        if value is None:
+            return "null"
+        if isinstance(value, bool):
+            return "boolean"
+        if _is_number(value):
+            return "number"
+        if isinstance(value, str):
+            return "string"
+        if isinstance(value, list):
+            return "array"
+        return "object"
+
+    def holds(op, found, reached, operand):
+        """SPEC 13.8.6: total evaluation of one predicate. A reached JSON
+        null is nothing, as it is for a binding."""
+        if reached is None:
+            found = False
+        if op == "present":
+            return found
+        if op == "absent":
+            return not found
+        if not found:
+            return False
+        if op == "empty":
+            return isinstance(reached, (str, list, dict)) and len(reached) == 0
+        if op == "non_empty":
+            return isinstance(reached, (str, list, dict)) and len(reached) > 0
+        equal = json_type(reached) == json_type(operand) and \
+            spec_equal(reached, operand)
+        if op == "eq":
+            return equal
+        if op == "neq":
+            return not equal
+        if not _is_number(reached) or not _is_number(operand):
+            return False
+        return {"lt": reached < operand, "lte": reached <= operand,
+                "gt": reached > operand, "gte": reached >= operand}[op]
+
+    def visible(parsed, scope):
+        for absolute, tokens, op, operand in parsed:
+            if not absolute and scope is _PROBE:
+                continue  # present-but-unknown in the empty-array probe
+            try:
+                found, reached = resolve_pointer(
+                    data if absolute else scope, tokens, "")
+            except MaterializeError:
+                found, reached = False, None
+            if not holds(op, found, reached, operand):
+                return False
+        return True
+
+    def check_conditional_subtree(node, path):
+        """SPEC 13.8.6: the closed list a conditional node may not contain —
+        a stateful node, an editor, a variant_host, an id — reported at the
+        offending node or member. A capture_fields descriptor may stay: a
+        hidden node never dispatches and its IDs live outside the subtree."""
+        def scan(value, vpath):
+            if isinstance(value, list):
+                for i, child in enumerate(value):
+                    scan(child, f"{vpath}[{i}]")
+                return
+            if not isinstance(value, dict):
+                return
+            node_type = value.get("t") if "t" in value else None
+            if node_type is not None:
+                if is_forbidden_type(node_type, value):
+                    raise MaterializeError(
+                        vpath, f"`{node_type}` is prohibited under a "
+                               "conditional node (SPEC 13.8.6)")
+                if "id" in value:
+                    raise MaterializeError(
+                        f"{vpath}.id", "id is prohibited under a conditional "
+                                       "node (SPEC 13.8.6)")
+            for key, child in value.items():
+                if node_type is not None and (
+                        key == "bind" or key in OPAQUE_NODE_WALK_MEMBERS):
+                    continue
+                scan(child, f"{vpath}.{key}")
+
+        scan(node, path)
 
     def check_template_descriptor(descriptor, path):
         if not isinstance(descriptor, dict):
@@ -1943,6 +2134,11 @@ def materialize(spec, data, spec_path: str, data_path: str):
                 raise MaterializeError(
                     f"{path}.{member}",
                     f"a template node MUST NOT author {member} (SPEC 13.8.5)")
+        if "visible_when" in template:
+            raise MaterializeError(
+                f"{path}.visible_when",
+                "a template node MUST NOT carry visible_when; Emacs filters "
+                "the array (SPEC 13.8.6)")
         for member in TEMPLATE_SCHEMA.get("root_must_bind", []):
             if not (isinstance(template.get("bind"), dict)
                     and member in template["bind"]):
@@ -2011,14 +2207,44 @@ def materialize(spec, data, spec_path: str, data_path: str):
                 f"{path}.children",
                 "children is both authored and templated (SPEC 13.8.5)")
 
-    def walk(value, path, scope=None, depth=0, template_root=False):
+    def walk(value, path, scope=None, depth=0, template_root=False,
+             children_array=False, in_children=False):
         nonlocal count
         if isinstance(value, list):
-            return [walk(v, f"{path}[{i}]", scope, depth)
-                    for i, v in enumerate(value)]
+            if not children_array:
+                return [walk(v, f"{path}[{i}]", scope, depth)
+                        for i, v in enumerate(value)]
+            # SPEC 13.8.6: a children array evaluates its conditional
+            # elements before anything beneath them is resolved; when any
+            # element is conditional every element must be keyed.
+            def conditional(v):
+                return isinstance(v, dict) and "t" in v and "visible_when" in v
+            if any(conditional(v) for v in value):
+                for i, v in enumerate(value):
+                    if not (isinstance(v, dict) and "key" in v):
+                        raise MaterializeError(
+                            f"{path}[{i}].key",
+                            "every sibling of a conditional node MUST carry "
+                            "key (SPEC 13.8.6)")
+            shown = []
+            for i, v in enumerate(value):
+                if conditional(v):
+                    parsed = check_visible_shape(v, f"{path}[{i}]", scope)
+                    check_conditional_subtree(v, f"{path}[{i}]")
+                    if not visible(parsed, scope):
+                        continue
+                shown.append(walk(v, f"{path}[{i}]", scope, depth,
+                                  in_children=True))
+            return shown
         if not isinstance(value, dict):
             return value
         node_type = value.get("t") if "t" in value else None
+        if node_type is not None and "visible_when" in value and \
+                not in_children:
+            raise MaterializeError(
+                f"{path}.visible_when",
+                "visible_when is admitted only on an element of a children "
+                "array (SPEC 13.8.6)")
         out = {}
         resolved = {}
         expansion = None
@@ -2080,11 +2306,13 @@ def materialize(spec, data, spec_path: str, data_path: str):
                         bpath, f"required `{member}` reaches nothing")
         for key, child in value.items():
             if node_type is not None and \
-                    (key in ("bind", "template")
+                    (key in ("bind", "template", "visible_when")
                      or key in OPAQUE_NODE_WALK_MEMBERS):
                 out[key] = child
             else:
-                out[key] = walk(child, f"{path}.{key}", scope, depth)
+                out[key] = walk(child, f"{path}.{key}", scope, depth,
+                                children_array=(node_type is not None
+                                                and key == "children"))
         out.update(resolved)
         if expansion is not None:
             template = value["template"]

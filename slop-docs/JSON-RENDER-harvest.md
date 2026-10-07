@@ -315,9 +315,8 @@ W2 stands. The rules that keep it there: only on an element of a `children`
 array (never a root, a slot member, a `stale_spec` node or a template root —
 Emacs filters arrays); every element of an array containing a conditional node
 MUST carry `key`, so identity never falls back to position while siblings
-appear and disappear; and no stateful node, `editor`, `variant_host`, `id` or
-`capture_fields` beneath a conditional node, so §13.6 drafts are untouched in
-this version. json-render's `$or`, `not`, truthiness and `$state`-valued
+appear and disappear; and no stateful node, `editor`, `variant_host` or `id`
+beneath a conditional node, so §13.6 drafts are untouched in this version. json-render's `$or`, `not`, truthiness and `$state`-valued
 right-hand sides are deliberately not taken.
 
 **Decisions this take needed:** gate it behind measurement, plan it, or rule

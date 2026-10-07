@@ -355,6 +355,8 @@ A receiver MUST enforce all of the following limits:
 | Bindings in one surface snapshot (Section 13.8.3) | 10,000 |
 | Operations in one `surface.data` request (Section 13.8.4) | 1,000 |
 | Elements expanded from one template (Section 13.8.5) | 10,000 |
+| Predicates on one conditional node (Section 13.8.6) | 8 |
+| Predicates in one surface snapshot (Section 13.8.6) | 10,000 |
 
 A `variant_host` MUST contain at least two and at most eight alternatives. Its
 host node, every `Variant.content` root, and every descendant in every selected
@@ -2213,7 +2215,8 @@ attribute is content-invalid in `bind`. A snapshot MUST NOT carry more than
 multi-view entry, and every `variant_host` alternative.
 
 Materialization precedes every other admission step: pointer syntax and the
-bindable-member rule are checked, bindings are resolved, the materialized
+bindable-member rule are checked, Section 13.8.6 visibility predicates are
+evaluated and hidden subtrees omitted, bindings are resolved, the materialized
 document is validated (Sections 13.2, 16, 17), its stateful nodes are
 extracted, drafts are reconciled against the materialized authored values
 (Section 13.6), and only then is the snapshot persisted and presented. Every
@@ -2351,6 +2354,79 @@ Because every `surface.data` re-materializes the expansion, replacing or
 editing the bound array inserts, removes and reorders rows at an ordinary new
 revision without resending the tree, and each row's retained presentation
 follows its `key` (Section 16.1).
+
+#### 13.8.6 Conditional nodes (`data.visible`)
+
+A node MAY carry the universal attribute `visible_when` (Section 16.5): a
+non-empty array of at most `max_visible_predicates_per_node` predicate objects
+whose conjunction decides whether the Companion presents the node. The array
+means logical AND in the Section 21.3 discipline: flat, with no OR, no nesting,
+and no negation beyond the operators below. Beyond the `data.model` capability
+the attribute is member-gated by the `data.visible` feature (Section 22.4):
+when the target profile does not advertise it, the sender MUST evaluate the
+predicates itself and omit every node whose conjunction fails.
+
+A predicate is a closed object `{path, op, value?}`. `path` is a Section 13.8.2
+pointer — absolute, or relative inside an item scope exactly as a `bind`
+pointer is (Section 13.8.5). `op` is one of the `enums."visible.op"` values:
+`present`, `absent`, `empty` and `non_empty` take no `value`; `eq` and `neq`
+take a `value` that is a JSON string, number or boolean; `lt`, `lte`, `gt` and
+`gte` take a finite number. A predicate with a missing or surplus
+member, an unregistered `op`, a `value` of the wrong type or presence, or a
+malformed pointer is content-invalid at `<node>.visible_when[i].<member>`; an
+empty array, a non-array, or more than `max_visible_predicates_per_node`
+entries is content-invalid at `<node>.visible_when`.
+
+Evaluation is total and deterministic over the Companion-held document. Let R
+be the value `path` reaches, or nothing; a reached JSON null is nothing, as it
+is for a binding. `present` holds when R is a value; `absent` holds when R is
+nothing. `empty` holds when R is `""`, `[]` or `{}`; `non_empty` holds when R
+is a non-empty string, array or object. `eq` holds when R is a value of the
+same JSON type as `value` and equal to it under Section 4.3; `neq` holds when
+R is a value and `eq` does not hold. The ordering operators hold only when
+R is a number and the Section 4.3 comparison with `value` holds. Every other
+case fails: a wrong type is a failed predicate, never a rejection, because the
+document is dynamic and was already admitted; a sender that wants a warning
+checks the current document at authoring time.
+
+Visibility is evaluated at materialization (Section 13.8.3) before the node's
+own bindings are resolved. When the conjunction fails the node and its subtree
+are omitted from the materialized `children` array that contains them, and
+nothing beneath it is resolved, validated or counted, so a hidden node MAY bind
+pointers that reach nothing. When it holds the node is materialized as any
+other; `visible_when` remains on it as the universal attribute it is, and a
+receiver ignores it. Because every `surface.data` re-materializes, a `set` on a
+value a predicate reads shows or hides the node at an ordinary new revision
+without resending the tree.
+
+`visible_when` is admitted only on an element of a `children` array. A surface
+root, a `views` entry, a `variant_host` alternative, a node held in any other
+Node-typed slot, a `stale_spec` node, and a template node (the root of a
+template; Emacs filters arrays) MUST NOT carry it; nodes inside a template body
+MAY, with relative pointers, so one copy of a row shows a part another copy
+omits. When any element of a `children` array carries `visible_when`, every
+element of that array MUST carry `key` (Section 16.1), so identity never falls
+back to the tree position while siblings appear and disappear. A conditional
+node and its subtree MUST NOT contain a Section 14.6 stateful node, an
+`editor`, a `variant_host`, or a node carrying `id` — so the Section 13.6
+draft rules are untouched by visibility in this version. An ActionDescriptor
+beneath a conditional node MAY carry `capture_fields`: a hidden node never
+dispatches, and the IDs it names live outside the subtree. A violation is
+content-invalid at the offending member or node (for example
+`<node>.children[1].id`, `<node>.children[0]`). `visible_when` MUST NOT be bound
+(Section 13.8.3) and, like `template`, is admitted in app surface snapshots
+only: `stale_spec`, widget bodies, tile specifications, dialog and notification
+documents MUST NOT carry it. Predicates count toward
+`max_visible_predicates_per_snapshot` over every root, `views` entry and
+`variant_host` alternative, once per template copy.
+
+> Informative: a visibility predicate is the class of Section 21.7 state
+> predicates and the Section 14.6.1 dropdown filter — a bounded exact
+> comparison over inert data that produces no value, costs O(predicates ×
+> pointer tokens), performs no I/O and terminates. Nothing here derives,
+> formats, filters or transforms data, so the W2 ruling and Section 23.2
+> stand; `slop-docs/JSON-RENDER-harvest.md` §6 records why json-render's
+> `$cond`, `$or`, truthiness and expression-valued operands were not taken.
 
 ## 14. Actions and input state
 
@@ -2989,7 +3065,9 @@ discriminator `t` is part of the identity: reusing a key
 or ID with a different node type creates a new identity and MUST clear retained
 presentation state. Tree-path identity is unstable under insertion;
 Emacs SHOULD supply a `key` or `id` for any node whose local presentation state
-should survive a snapshot replacement.
+should survive a snapshot replacement. A `children` array that contains a
+Section 13.8.6 conditional node MUST key every element, since a hidden sibling
+would otherwise shift the tree path of the ones after it.
 
 Presentation identity controls focus, expansion, selection, scroll anchors,
 and similar rendering state. Input drafts are the deliberate exception because
@@ -3124,6 +3202,7 @@ density-independent units (`dp`) unless stated otherwise.
 | `semantics` | Semantics object | — | Optional toolkit-neutral accessibility metadata and bounded custom actions (§16.5.1) |
 | `bind` | Bind object | — | Member-to-pointer bindings resolved from the surface data document (§13.8.3); admitted only under `data.model` |
 | `template` | Node | — | The node expanded once per element of the array bound as `children` (§13.8.5); admitted only under `data.model` with the `data.template` feature |
+| `visible_when` | array of Predicate objects | — | The conjunction of bounded predicates over the data document that decides whether the node is presented (§13.8.6); admitted only on a keyed `children` element under `data.model` with the `data.visible` feature |
 
 A Pad object MAY contain `start`, `top`, `end`, `bottom`, `horizontal`, and
 `vertical`. A side-specific value wins over its axis shorthand. A Corner object
@@ -3242,7 +3321,8 @@ a receiver MUST NOT apply type coercion omitted by them.
 
 `bind` is a Bind object; every pointer inside it, and every `path` of a
 Section 13.8.4 DataOp, is a `json-pointer` (Section 13.8.2). `template` is a
-Node (Section 13.8.5).
+Node (Section 13.8.5). `visible_when` is an array of Section 13.8.6 Predicate
+objects (`visible-when-array`).
 
 A member whose type depends on its node — `items`, `selected`, `fill`,
 `size`, and `value` — is projected under a `node.member` key in
@@ -5314,7 +5394,7 @@ This document defines these session capability names:
 | `capabilities` | `capability.invoke` and `device.caps` |
 | `triggers` | `triggers.set`, trigger reports, and predicate reports |
 | `offline.wake` | The Companion can attempt the `wake` offline policy |
-| `data.model` | Section 13.8: the surface data document, `bind`, `surface.data`, and — with the `data.template` feature — `template` and the `item` injection |
+| `data.model` | Section 13.8: the surface data document, `bind`, `surface.data`, and — with the `data.template` feature — `template` and the `item` injection, and — with the `data.visible` feature — `visible_when` |
 
 Core session, `app:*` surfaces, state reporting, durable replay, and the Core
 Node Set are not negotiated capabilities. A Companion claiming EBP core
@@ -5444,6 +5524,7 @@ absent.
 | `action.open_surface` | a remote ActionDescriptor carrying `open_surface` (Section 14.1) | omit the `open_surface` member |
 | `data.template` | a node carrying `template` and `bind.children` (Section 13.8.5) | expand the template in Emacs and send literal `children` |
 | `data.insert` | a Section 13.8.4 DataOp whose `op` is `insert` | send a `set` of the containing array instead |
+| `data.visible` | a node carrying `visible_when` (Section 13.8.6) | evaluate the predicates in Emacs and omit every node whose conjunction fails |
 
 A feature name is a Section 4.4 identifier. A receiver MUST ignore an
 unrecognized `features` entry. A new constraining or member-gating feature
@@ -5778,8 +5859,11 @@ operations it admits; one advertising `data.insert` MUST reproduce them all.
 known-answer vectors, each a `spec`, a `data` document, and either the exact
 materialized document or the `error.data.path` at which the snapshot is
 rejected, including the Section 13.8.5 template expansions with relative
-pointers, bound keys, nesting and the empty array. A Companion claiming
-`data.model` MUST reproduce every vector.
+pointers, bound keys, nesting and the empty array, and the Section 13.8.6
+conditional nodes — every operator, the hidden and shown branches, relative
+predicates inside a template copy, and the placement, keyed-sibling and
+forbidden-subtree rejections. A Companion claiming `data.model` MUST reproduce
+every vector.
 
 ### 24.6 Required adversarial tests
 
@@ -5841,6 +5925,13 @@ requires of an excused role.
     flush; and acknowledgement, reset, alternative removal, host removal, type
     change, tombstone, and pairing revocation each clearing the retained draft
     at its specified boundary.
+18. conditional nodes (Section 13.8.6): a snapshot at
+    `max_visible_predicates_per_snapshot` admitted and one predicate more
+    rejected, nine predicates on one node rejected, a `surface.data` that
+    flips every conditional node in a 10,000-node snapshot re-materialized
+    within the Section 22.2 budget, an unkeyed sibling rejected, and a
+    conditional node whose pointer reaches a value of the wrong type hidden
+    rather than rejected.
 
 An optional-module suite MUST add failure and crash-boundary cases specific to
 that module.

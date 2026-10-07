@@ -87,7 +87,8 @@
     "align_self",
     "semantics",
     "bind",
-    "template"
+    "template",
+    "visible_when"
   ],
   "semantics_schema": {
     "required": [],
@@ -1309,7 +1310,8 @@
     "weight": "number",
     "corner": "number-or-corner-object",
     "border": "border-object",
-    "alpha": "number"
+    "alpha": "number",
+    "visible_when": "visible-when-array"
   },
   "enums": {
     "text.style": [
@@ -1677,6 +1679,18 @@
     "locale.hour_cycle": [
       "h12",
       "h23"
+    ],
+    "visible.op": [
+      "present",
+      "absent",
+      "empty",
+      "non_empty",
+      "eq",
+      "neq",
+      "lt",
+      "lte",
+      "gt",
+      "gte"
     ],
     "snackbar.result": [
       "dismissed",
@@ -2804,7 +2818,9 @@
       "max_pointer_segments": 32,
       "max_bindings_per_snapshot": 10000,
       "max_data_ops": 1000,
-      "max_template_items": 10000
+      "max_template_items": 10000,
+      "max_visible_predicates_per_node": 8,
+      "max_visible_predicates_per_snapshot": 10000
     },
     "welcome": {
       "max_frame_bytes": {
@@ -3105,7 +3121,8 @@
     "editor.candidate_kind",
     "action.open_surface",
     "data.template",
-    "data.insert"
+    "data.insert",
+    "data.visible"
   ],
   "candidate_schema": {
     "required": [
@@ -3298,7 +3315,8 @@
       "semantics",
       "variants",
       "swipe_start",
-      "swipe_end"
+      "swipe_end",
+      "visible_when"
     ],
     "unbindable_tags": [
       "action-descriptor",
@@ -3345,6 +3363,52 @@
         "stateful": true
       },
       "injection": "item",
+      "admitted_in": [
+        "app"
+      ]
+    },
+    "visible": {
+      "feature": "data.visible",
+      "attribute": "visible_when",
+      "ops": {
+        "no_value": [
+          "present",
+          "absent",
+          "empty",
+          "non_empty"
+        ],
+        "scalar_value": [
+          "eq",
+          "neq"
+        ],
+        "number_value": [
+          "lt",
+          "lte",
+          "gt",
+          "gte"
+        ]
+      },
+      "operand_types": [
+        "string",
+        "number",
+        "boolean"
+      ],
+      "null_is_nothing": true,
+      "placement": "children",
+      "siblings_must_key": true,
+      "forbidden_inside": {
+        "members": [
+          "id"
+        ],
+        "descriptor_members": [],
+        "node_types": [
+          "editor",
+          "variant_host"
+        ],
+        "stateful": true
+      },
+      "max_per_node_limit": "max_visible_predicates_per_node",
+      "max_per_snapshot_limit": "max_visible_predicates_per_snapshot",
       "admitted_in": [
         "app"
       ]
