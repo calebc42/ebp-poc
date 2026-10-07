@@ -1668,6 +1668,8 @@
       "on_refresh",
       "on_sheet_change",
       "on_expand_change",
+      "on_search",
+      "on_action",
       "on_long_tap",
       "on_add_row",
       "on_add_col",
@@ -1816,6 +1818,12 @@
       "on_point_tap": [
         "value",
         "index"
+      ],
+      "on_sheet_change": [
+        "value"
+      ],
+      "on_expand_change": [
+        "value"
       ]
     },
     "open_surface_feature": "action.open_surface"

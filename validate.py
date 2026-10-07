@@ -667,6 +667,44 @@ def check_menu_items(node, path: str):
         check_items(node.get("items"), f"{path}.items")
 
 
+CHECKBOX_STATES = set(contract["enums"]["checkbox.state"])
+
+
+def check_member_pairs(node, t: str, path: str):
+    """SPEC 17.2-17.4 (amendment #188): the co-occurrence rules the M3
+    tier-1 contract commits recorded and the sync made normative.
+
+    A tooltip's caret dimensions travel together and only with a caret, and
+    its action label and action travel together; a checkbox carries one value
+    form, so `state` excludes `checked` and is a logical value with no
+    fallback; `overlap` replaces `spacing` rather than adding to it; and
+    `enum_list.children` is parallel to `options`.
+    """
+    if t == "tooltip":
+        dims = [m for m in ("caret_width", "caret_height") if m in node]
+        if len(dims) == 1:
+            problem(f"{path}: caret_width and caret_height appear together")
+        if dims and node.get("caret") is not True:
+            problem(f"{path}: caret dimensions require caret: true")
+        if ("action_label" in node) != ("on_action" in node):
+            problem(f"{path}: action_label and on_action appear together")
+    elif t == "checkbox":
+        if "state" in node and "checked" in node:
+            problem(f"{path}: state and checked are mutually exclusive")
+        if "state" in node and not (isinstance(node["state"], str)
+                                    and node["state"] in CHECKBOX_STATES):
+            problem(f"{path}.state: must be one of "
+                    f"{sorted(CHECKBOX_STATES)}")
+    elif t in ("row", "column"):
+        if "overlap" in node and "spacing" in node:
+            problem(f"{path}: overlap and spacing are mutually exclusive")
+    elif t == "enum_list" and "children" in node:
+        children, options = node["children"], node.get("options")
+        if not isinstance(children, list) or (
+                isinstance(options, list) and len(children) != len(options)):
+            problem(f"{path}.children: must be parallel to options")
+
+
 def check_swipe_side(value, path: str, direction: str,
                      ctx: NodeDocument, owner_id: str | None):
     """Amendment #184: validate both the legacy and reveal-first shapes."""
@@ -1162,6 +1200,7 @@ def _check_node(value, path: str, depth: int, ctx: NodeDocument,
                 check_slider_values(value, path)
             if t == "menu":
                 check_menu_items(value, path)
+            check_member_pairs(value, t, path)
             for swipe_member, direction in (
                     ("swipe_start", "start"), ("swipe_end", "end")):
                 if swipe_member in value:
