@@ -4698,6 +4698,13 @@ diagnostic is `{start, end, severity, message}` where severity is `error`,
 `{start, end, role}` where `role` is a syntax theme role. Runs MUST be sorted,
 MUST NOT overlap, and MUST fit the synchronized text.
 
+A `heading` run MAY carry `level`, an integer from 1 to 8 naming its outline
+depth, as Emacs's `outline-1` through `outline-8` faces do. A Companion that
+varies heading presentation by depth, for example a per-level color cycle,
+SHOULD style the run for that level; one that does not MAY ignore it. `level`
+on any other role, or outside 1 to 8, MUST be ignored rather than rejected.
+Absent `level` means the Companion's level-1 heading style.
+
 `eldoc.show` params are `{editor_id, session, seq, text}`. `text` is plain
 documentation text.
 
