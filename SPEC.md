@@ -3356,8 +3356,13 @@ MUST NOT rely on a hidden action as the only path to load-bearing behavior.
 | `badge` | `label: string` | `icon`, `color`, `children`. An empty label MAY render as an attention dot. A decimal-integer string MAY be visually capped, but its exact accessible value MUST remain available. |
 
 A `RichSpan` MUST contain `text: string` and MAY contain `font_weight`, `italic`,
-`underline`, `color`, `bg`, `mono`, and `on_tap`. The Companion MUST treat span
+`underline`, `color`, `bg`, `mono`, `scale`, and `on_tap`. The Companion MUST treat span
 text as plain text. A span action MUST obey Section 14.
+
+`scale` is a number from `0.5` to `2.0` multiplying the span's font size
+relative to the text it sits in, as a smaller run of tags follows a title. A
+Companion SHOULD honor it; one that cannot MAY render the span at the base
+size. An absent `scale` is `1`; a value outside the range is content-invalid.
 
 For `date_stamp`, `day` is an integer `1..31`, `month` is a display string,
 `month_index` is an integer `1..12`, `year` is a non-negative integer, and
@@ -3857,8 +3862,8 @@ unknown-node Companion renders it through Section 16.2.
 
 A `scaffold` node has no required members and MAY contain `top_bar`, `body`,
 `bottom_bar`, `fab`, `floating_toolbar`, and `drawer` as Nodes;
-`snackbar: string`; `snackbar_action: {label, on_tap}`; and
-`on_refresh: ActionDescriptor`.
+`snackbar: string`; `snackbar_action: {label, on_tap}`;
+`on_refresh: ActionDescriptor`; and `on_back: ActionDescriptor`.
 
 The Companion MUST dispatch a snackbar action only on a user tap, never on
 timeout. The Companion presents `snackbar` when an accepted snapshot introduces
@@ -3871,6 +3876,15 @@ identity: it is not a node and retains no local state.
 It MUST dispatch `on_refresh` only after a user refresh gesture. A
 drawer or bar is structural content and MUST NOT acquire hidden navigation
 behavior not declared by its nodes.
+
+`on_back` declares what the platform back gesture does on a screen whose top
+bar draws no back arrow, such as a top-level destination that shows a drawer's
+menu button while a parent screen remains below it. When the presented scaffold
+carries `on_back` and its top bar's leading control is not a back arrow, the
+Companion MUST dispatch `on_back` on the back gesture instead of the platform
+default. A leading back arrow's own action wins over `on_back`, and an open
+drawer, sheet or dialog consumes the gesture first. `on_back` MUST be dispatched
+only on a user back gesture.
 
 The `badge` member MAY appear on an icon or navigation control as either a
 string or number. A number above the platform's visual limit MAY display as
