@@ -3560,11 +3560,12 @@ A cell MUST contain `spans: RichSpan[]` and MAY contain `on_tap` and
 
 A swipe side has either the legacy closed shape
 `{icon?, label, color?, on_trigger}` or the rich closed shape
-`{actions: SwipeAction[], commit?: boolean}`. A `SwipeAction` is the closed
-object `{icon?, label, color?, on_trigger}`. Labels MUST be non-empty and
-distinct within a side. `actions` contains one through four entries in authored
-order. `commit` defaults to `false` and MAY be `true` only with one or two
-actions.
+`{actions: SwipeAction[], commit?: boolean, presentation?}`. A `SwipeAction` is
+the closed object `{icon?, label, color?, on_trigger}`. Labels MUST be
+non-empty and distinct within a side. `actions` contains one through four
+entries in authored order. `commit` defaults to `false` and MAY be `true` only
+with one or two actions. `presentation` is `reveal` (the default) or `popup`
+(`enums."swipe.presentation"`); `commit` MUST NOT be `true` with `popup`.
 
 The legacy form retains its existing one-gesture behavior: crossing the
 implementation's commit threshold MAY invoke its single action on release.
@@ -3578,6 +3579,19 @@ reveals. Every action dispatches at most once per completed gesture or tap, and
 the item returns to its resting position after dispatch. Emacs SHOULD provide a
 non-swipe path to the same action for accessibility and for Companions without
 swipe support.
+
+A `popup` side never displaces the item. A horizontal gesture toward that
+side — a fling, or a drag past the ordinary threshold — opens the side's
+actions as a floating row of icon buttons beside the gesture: the Companion
+SHOULD place it at the gesture's end along the row and above the touch,
+never above the item's top edge, so a finger does not cover it. Each button
+shows the action's `icon` (its `label` is the accessible name, and a tooltip
+where the platform has one); an action without `icon` shows its label.
+Tapping a button dispatches that action's `on_trigger` once and closes the
+popup; a tap outside, Back, or another gesture closes it without dispatch. A
+receiver SHOULD keep at most one popup open in a presentation scope. The
+popup is ephemeral presentation state: it survives no snapshot replacement,
+tombstoning, or transport loss.
 
 ### 17.4 Input nodes
 

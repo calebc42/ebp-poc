@@ -172,12 +172,15 @@ def check_contract():
         problem("contract.json: swipe action shape drifted")
     rich_swipe = SWIPE_SCHEMA.get("rich", {})
     if rich_swipe.get("required") != ["actions"] or \
-            rich_swipe.get("optional") != ["commit"] or \
+            rich_swipe.get("optional") != ["commit", "presentation"] or \
             rich_swipe.get("min_actions") != 1 or \
             rich_swipe.get("max_actions_limit") != \
             "max_swipe_actions_per_side" or \
-            rich_swipe.get("commit_max_actions") != 2:
-        problem("contract.json: rich swipe constraints drifted")
+            rich_swipe.get("commit_max_actions") != 2 or \
+            rich_swipe.get("presentation_enum") != "swipe.presentation" or \
+            rich_swipe.get("presentation_default") != "reveal" or \
+            ENUMS.get("swipe.presentation") != ["reveal", "popup"]:
+        problem("contract.json: rich swipe constraints drifted (amendment #207)")
     for t in contract.get("core_node_set", []):
         if t not in NODE_TYPES:
             problem(f"contract.json: core node `{t}` not in node_types")
@@ -526,7 +529,7 @@ NON_NODE_ENUM_DOMAINS = {
     "dialog.style", "notification.priority", "diagnostic.severity",
     "toolbar.placement", "tab_item.icon_position", "theme.layout_direction",
     "window.size_class", "locale.hour_cycle", "colors.polarity", "visible.op",
-    "snackbar.result", "canvas.op",
+    "snackbar.result", "canvas.op", "swipe.presentation",
 }
 
 
@@ -1019,6 +1022,13 @@ def check_swipe_side(value, path: str, direction: str,
         problem(f"{path}.commit: must be a boolean")
     if commit is True and len(actions) > rich.get("commit_max_actions", 2):
         problem(f"{path}.commit: deep commit supports at most two actions")
+    # Amendment #207: a popup side never displaces the item, so it has no
+    # deeper travel to commit on.
+    presentation = value.get("presentation", rich.get("presentation_default"))
+    if presentation not in ENUMS.get(rich.get("presentation_enum", ""), []):
+        problem(f"{path}.presentation: not in enums.swipe.presentation")
+    elif presentation == "popup" and commit is True:
+        problem(f"{path}.commit: a popup side cannot commit")
     labels = []
     for i, action in enumerate(actions):
         label = one(action, f"{path}.actions[{i}]")
