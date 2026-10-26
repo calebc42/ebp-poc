@@ -79,6 +79,8 @@ UNBINDABLE_TAGS = set(DATA_SCHEMA.get("unbindable_tags", []))
 # Amendment #195 (SPEC 13.8.5): templates expanded over bound arrays.
 TEMPLATE_SCHEMA = DATA_SCHEMA.get("template", {})
 LOCALE_SCHEMA = contract.get("locale_schema", {})
+# Amendment #205: the device's own color scheme, reported like the locale.
+COLORS_SCHEMA = contract.get("colors_schema", {})
 # Amendment #198: conditional nodes.
 VISIBLE_SCHEMA = DATA_SCHEMA.get("visible", {})
 VISIBLE_OP_VALUE = {
@@ -225,9 +227,26 @@ def check_contract():
             LOCALE_SCHEMA.get("notification") != "locale.changed":
         problem("contract.json: locale_schema must name the `locale` welcome "
                 "member and `locale.changed`")
+    # Amendment #205: the device colors are one notification, one welcome
+    # mirror, one enum and one closed grammar on the same model.
+    colors_method = METHODS.get("colors.changed", {})
+    if colors_method.get("class") != "notification" or \
+            colors_method.get("sender") != "companion" or \
+            colors_method.get("params", {}).get("required") != \
+            COLORS_SCHEMA.get("required") or \
+            COLORS_SCHEMA.get("required") != ["polarity", "light", "dark"]:
+        problem("contract.json: `colors.changed` must be a Companion "
+                "notification requiring polarity, light, dark "
+                "(amendment #205)")
+    if COLORS_SCHEMA.get("welcome_member") != "colors" or \
+            COLORS_SCHEMA.get("notification") != "colors.changed" or \
+            COLORS_SCHEMA.get("scheme_required_roles") != "theme_roles" or \
+            COLORS_SCHEMA.get("polarity_enum") not in ENUMS:
+        problem("contract.json: colors_schema must name the `colors` welcome "
+                "member, `colors.changed`, theme_roles and a polarity enum")
     welcome_optional = METHODS.get("auth.response", {}).get(
         "result", {}).get("optional", [])
-    for member in ("window", "locale"):
+    for member in ("window", "locale", "colors"):
         if member not in welcome_optional:
             problem(f"contract.json: `auth.response` result must admit the "
                     f"optional `{member}` mirror (SPEC 10.2)")
@@ -506,7 +525,8 @@ ENUMS = contract.get("enums", {})
 NON_NODE_ENUM_DOMAINS = {
     "dialog.style", "notification.priority", "diagnostic.severity",
     "toolbar.placement", "tab_item.icon_position", "theme.layout_direction",
-    "window.size_class", "locale.hour_cycle", "visible.op", "snackbar.result", "canvas.op",
+    "window.size_class", "locale.hour_cycle", "colors.polarity", "visible.op",
+    "snackbar.result", "canvas.op",
 }
 
 
@@ -1623,6 +1643,45 @@ def check_locale_object(obj, path: str):
         problem(f"{path}.time_zone: not an IANA zone id within locale_schema")
 
 
+def check_colors_object(obj, path: str):
+    """SPEC 20.1.3 (#205): the `{polarity, light, dark}` device colors, as
+    the `colors.changed` params and the welcome's `colors` mirror.  Each
+    scheme carries every standard theme role, at most 64 members in all,
+    lowercase `#rrggbb` values, and extended roles that are identifiers."""
+    if not isinstance(obj, dict):
+        problem(f"{path}: colors object must be an object (SPEC 20.1.3)")
+        return
+    required = COLORS_SCHEMA.get("required", [])
+    for member in required:
+        if member not in obj:
+            problem(f"{path}: colors object missing `{member}`")
+    for member in obj:
+        if member not in required:
+            problem(f"{path}: unknown colors member `{member}`")
+    polarity = obj.get("polarity")
+    if polarity not in ENUMS.get(COLORS_SCHEMA.get("polarity_enum", ""), []):
+        problem(f"{path}.polarity: not in enums.colors.polarity")
+    roles = contract.get(COLORS_SCHEMA.get("scheme_required_roles", ""), [])
+    pattern = COLORS_SCHEMA.get("color_pattern", "")
+    limit = COLORS_SCHEMA.get("scheme_max_members", 64)
+    for name in ("light", "dark"):
+        scheme = obj.get(name)
+        spath = f"{path}.{name}"
+        if not isinstance(scheme, dict):
+            problem(f"{spath}: scheme must be an object")
+            continue
+        if len(scheme) > limit:
+            problem(f"{spath}: more than {limit} members")
+        for role in roles:
+            if role not in scheme:
+                problem(f"{spath}: standard role `{role}` missing")
+        for role, value in scheme.items():
+            if role not in roles and not is_identifier(role):
+                problem(f"{spath}: extended role `{role}` is not an identifier")
+            if not isinstance(value, str) or not re.fullmatch(pattern, value):
+                problem(f"{spath}.{role}: not a lowercase #rrggbb color")
+
+
 def check_params(method: str, params, path: str):
     entry = METHODS[method]
     if not isinstance(params, dict):
@@ -1659,6 +1718,9 @@ def check_params(method: str, params, path: str):
     # Amendment #197: device locale advice has a closed grammar.
     if method == "locale.changed":
         check_locale_object(params, path)
+    # Amendment #205: so does the device color scheme.
+    if method == "colors.changed":
+        check_colors_object(params, path)
     # Structured members ride the node/action validators.
     if method == "surface.data":
         check_data_ops(params, path)

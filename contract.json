@@ -1701,6 +1701,10 @@
       "h12",
       "h23"
     ],
+    "colors.polarity": [
+      "light",
+      "dark"
+    ],
     "visible.op": [
       "present",
       "absent",
@@ -1950,7 +1954,8 @@
           "input_state",
           "device",
           "window",
-          "locale"
+          "locale",
+          "colors"
         ]
       },
       "errors": [
@@ -2708,6 +2713,23 @@
         "optional": []
       }
     },
+    "colors.changed": {
+      "sender": "companion",
+      "class": "notification",
+      "states": [
+        "SYNCING",
+        "READY"
+      ],
+      "capability": "core",
+      "params": {
+        "required": [
+          "polarity",
+          "light",
+          "dark"
+        ],
+        "optional": []
+      }
+    },
     "snackbar.show": {
       "sender": "emacs",
       "class": "request",
@@ -3242,6 +3264,20 @@
     "hour_cycle_enum": "locale.hour_cycle",
     "time_zone_pattern": "^[A-Za-z0-9_+./-]+$",
     "time_zone_max_bytes": 64
+  },
+  "colors_schema": {
+    "welcome_member": "colors",
+    "notification": "colors.changed",
+    "required": [
+      "polarity",
+      "light",
+      "dark"
+    ],
+    "polarity_enum": "colors.polarity",
+    "scheme_required_roles": "theme_roles",
+    "scheme_max_members": 64,
+    "extended_role_type": "identifier",
+    "color_pattern": "^#[0-9a-f]{6}$"
   },
   "widget_size_variant_schema": {
     "required": [

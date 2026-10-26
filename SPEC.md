@@ -1522,16 +1522,34 @@ On successful `auth.response`, the Companion returns:
     "max_capture_fields": 64,
     "max_dialogs": 4
   },
-  "locale": {"tag": "de-DE", "hour_cycle": "h23", "time_zone": "Europe/Berlin"}
+  "locale": {"tag": "de-DE", "hour_cycle": "h23", "time_zone": "Europe/Berlin"},
+  "colors": {
+    "polarity": "dark",
+    "light": {"primary": "#396286", "on_primary": "#ffffff",
+              "secondary": "#585e71", "on_secondary": "#ffffff",
+              "background": "#f8f9fe", "on_background": "#191c20",
+              "surface": "#f8f9fe", "on_surface": "#191c20",
+              "outline": "#74777f", "error": "#ba1a1a", "on_error": "#ffffff",
+              "success": "#2e7d32", "warning": "#b26a00",
+              "primary_container": "#d1e4ff", "on_surface_variant": "#44474e"},
+    "dark": {"primary": "#b4c5ff", "on_primary": "#1a2d60",
+             "secondary": "#c1c5dd", "on_secondary": "#2b3042",
+             "background": "#121318", "on_background": "#e3e2e9",
+             "surface": "#121318", "on_surface": "#e3e2e9",
+             "outline": "#8e9099", "error": "#ffb4ab", "on_error": "#690005",
+             "success": "#7fb77e", "warning": "#e0b44c",
+             "primary_container": "#1a2d60", "on_surface_variant": "#c4c6d0"}
+  }
 }
 ```
 
 The result MUST contain `server_proof`, `protocol`, `server`, `granted`,
 `surface_profiles`, `surfaces`, `queued_events`, and `limits`.
 `input_state` MUST be omitted when empty. `device` MUST be omitted unless
-`capabilities` or `triggers` was granted. `window` (Section 20.1.1) and
-`locale` (Section 20.1.2) are OPTIONAL mirrors of the Companion's latest
-presentation advice and are omitted while that advice is unknown.
+`capabilities` or `triggers` was granted. `window` (Section 20.1.1),
+`locale` (Section 20.1.2) and `colors` (Section 20.1.3) are OPTIONAL mirrors
+of the Companion's latest presentation advice and are omitted while that
+advice is unknown.
 
 The welcome members have these schemas:
 
@@ -1549,6 +1567,7 @@ The welcome members have these schemas:
 | `device` | device report defined in Section 20.1 |
 | `window` | the latest Section 20.1.1 window geometry object, when known |
 | `locale` | the latest Section 20.1.2 locale object, when known |
+| `colors` | the latest Section 20.1.3 device colors object, when known |
 
 Every `input_state` value MUST have the JSON type required by its node type and
 MUST fit `max_field_bytes`, and the complete object MUST fit
@@ -1722,6 +1741,7 @@ means `READY`.
 | `reminders.set` | Emacs | request | S, R | `reminders.owner` | 18 |
 | `window.changed` | Companion | notification | S, R | core | 20 |
 | `locale.changed` | Companion | notification | S, R | core | 20 |
+| `colors.changed` | Companion | notification | S, R | core | 20 |
 | `edit.open` | Companion | notification | R | `editor.sync` | 19 |
 | `edit.delta` | Companion | notification | R | `editor.sync` | 19 |
 | `edit.caret` | Companion | notification | R | `editor.sync` | 19 |
@@ -4185,6 +4205,13 @@ presentation implementation MAY derive additional local roles, ramps,
 typography, shapes, and elevations from these values, but those derived tokens
 are not EBP names and MUST NOT be accepted as `colors` members.
 
+`theme.set` states what the Companion draws; what the device itself would
+draw — its wallpaper-derived scheme, where the platform has one — is reported
+in the other direction by Section 20.1.3. An Emacs endpoint that wants the
+Companion to follow the device simply omits `colors` here; the report exists
+so that the colors Emacs authors itself can match the device's other
+applications.
+
 ### 18.5 Notification metadata and actions
 
 A `notification:*` surface metadata object MAY contain `channel: identifier`,
@@ -4879,6 +4906,46 @@ evaluates nothing: it reports facts, and every display string stays authored
 (Sections 17.2 and 23.2). The object is device data of the Section 20.1 class
 and is subject to the same logging discipline as the device report
 (Section 23.3). `contract.json` projects the grammar as `locale_schema`.
+
+#### 20.1.3 `colors.changed`
+
+The Companion reports the device's own color scheme with the `colors.changed`
+notification: `{polarity, light, dark}`. `polarity` is `light` or `dark`
+(`enums."colors.polarity"`), the system appearance the Companion follows when
+`theme.set` omits `dark` (Section 18.4). `light` and `dark` are the device's
+schemes at each polarity, each an object mapping role identifiers to Colors
+written as lowercase `#rrggbb` with no alpha. All three members are REQUIRED
+and the object is closed.
+
+Every scheme MUST contain the thirteen standard theme roles of Section 18.4
+and MUST NOT exceed 64 members. Any further member is an extended role: an
+identifier (Section 4.4) that the host platform's own design system names and
+EBP neither defines nor projects — a Companion built on Material 3 reports the
+rest of its color scheme in snake_case (`primary_container`,
+`on_surface_variant`, `surface_container_low`, and so on), and a Companion
+with no such vocabulary reports the standard roles alone. A Companion MUST
+report under a standard role's name only that role, MUST derive the roles the
+platform lacks (`success`, `warning`) from the same scheme it draws them from,
+and MUST report the scheme the device's own applications draw with: the
+wallpaper-derived scheme where the platform provides one, else the Companion's
+baseline scheme — never a palette `theme.set` pushed, which would only echo
+Emacs to itself.
+
+The notification MAY be sent once after authentication when the facts are
+known and MUST be sent again whenever any member changes — a new wallpaper, a
+flipped system appearance; it MUST NOT be re-sent for an unchanged object. The
+same object is mirrored as the OPTIONAL `colors` member of the `auth.response`
+welcome when it is already known, so the FIRST snapshot can be authored in the
+device's colors. Emacs uses it to author colors that match the device's other
+applications — a design profile's styles, an explicit Color on a node, a
+palette pushed back as `theme.set` `colors` — and MUST treat it as
+presentation advice, never as an event; when the object is absent Emacs falls
+back to its own palette. An extended role is a reported value, not an EBP
+name: no Color grammar (Section 16.6) resolves it, and an application that
+wants one authors the hex value it was given. The report changes nothing the
+Companion draws. The object is device data of the Section 20.1 class and is
+subject to the same logging discipline as the device report (Section 23.3).
+`contract.json` projects the grammar as `colors_schema`.
 
 ### 20.2 `capability.invoke`
 
