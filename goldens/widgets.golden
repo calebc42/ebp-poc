@@ -43,7 +43,7 @@
 43 {"autofocus":true,"clear_on_submit":true,"enabled":true,"hint":"Title","id":"title","keyboard":"text","label":"Title","max_lines":1,"min_lines":1,"monospace":false,"on_change":{"action":"title.change"},"on_submit":{"action":"title.submit"},"single_line":true,"syntax":"org","t":"text_input","value":"draft"}
 44 {"id":"pw","on_submit":{"action":"auth.submit","capture_fields":["pw"]},"password":true,"t":"text_input"}
 45 {"id":"body","t":"editor"}
-46 {"autofocus":false,"chromeless":false,"id":"body","line_numbers":true,"on_enter":{"action":"note.enter"},"on_save":{"action":"note.save"},"publish_state":true,"read_only":false,"syntax":"org","t":"editor","toolbar":[{"label":"TODO","placement":"line-start","snippet":"TODO "},{"icon":"menu","menu":[{"label":"Date","snippet":"${date}"}]}],"value":"local text"}
+46 {"autofocus":false,"chromeless":false,"hint":"Body","id":"body","line_numbers":true,"on_enter":{"action":"note.enter"},"on_save":{"action":"note.save"},"publish_state":true,"read_only":false,"syntax":"org","t":"editor","toolbar":[{"label":"TODO","placement":"line-start","snippet":"TODO "},{"icon":"menu","menu":[{"label":"Date","snippet":"${date}"}]}],"value":"local text"}
 47 {"complete":true,"document":"doc:notes/123","id":"doc","t":"editor","toolbar":[{"command":"org-refile","icon":"refile"}]}
 48 {"checked":true,"enabled":true,"id":"done","label":"Done","on_change":{"action":"todo.toggle"},"t":"checkbox"}
 49 {"checked":false,"id":"dark","label":"Dark","on_change":{"action":"theme.toggle"},"t":"switch"}

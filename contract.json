@@ -772,6 +772,7 @@
       "optional": [
         "document",
         "value",
+        "hint",
         "on_save",
         "on_enter",
         "single_line",

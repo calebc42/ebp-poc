@@ -3594,7 +3594,7 @@ node. `editor` uses `read_only` for editing permission in addition to
 | `chip` | `label: string` | `on_tap`, `selected`, `icon`, `enabled` |
 | `menu` | none | `items`, `groups`, `footer`, `icon`, `enabled`, `initial_scroll`. Exactly one of `items: MenuItem[]` and `groups: MenuGroup[]`. `icon` is the overflow anchor's glyph; `footer` is one Node drawn inside the popup below the rows; `initial_scroll`: `start` (default) or `end`. |
 | `text_input` | `id: identifier` | `value`, `hint`, `label`, `on_change`, `on_submit`, `single_line`, `min_lines`, `max_lines`, `monospace`, `syntax`, `password`, `keyboard`, `autofocus`, `clear_on_submit`, `variant`, `is_error`, `supporting_text`, `prefix`, `suffix`, `leading_icon`, `trailing_icon`, `max_length`, `selection`, `hide_keyboard_on_submit`, `content_padding`, `mask`, `filter`, `suggestions`, `enabled` |
-| `editor` | `id: identifier` | `document`, `value`, `on_save`, `on_enter`, `single_line`, `min_lines`, `max_lines`, `read_only`, `syntax`, `line_numbers`, `complete`, `chromeless`, `publish_state`, `autofocus`, `toolbar`, `enabled` |
+| `editor` | `id: identifier` | `document`, `value`, `hint`, `on_save`, `on_enter`, `single_line`, `min_lines`, `max_lines`, `read_only`, `syntax`, `line_numbers`, `complete`, `chromeless`, `publish_state`, `autofocus`, `toolbar`, `enabled` |
 | `checkbox` | `id: identifier` | `checked`, `label`, `on_change`, `enabled` |
 | `switch` | `id: identifier` | `checked`, `label`, `on_change`, `enabled` |
 | `enum_list` | `id: identifier`, `options: EnumOption[]` | `value`, `multi_select`, `allow_add`, `on_change`, `enabled` |
@@ -3645,7 +3645,7 @@ string, number, or boolean. Option values MUST be distinct under Section 4.3.
 
 For input nodes, every listed `on_*` member is an ActionDescriptor. `value`,
 `hint`, `label`, `supporting_text`, `prefix`, `suffix`, and `mask` on
-`text_input` and `editor.value` are strings; `single_line`, `monospace`,
+`text_input`, and `editor.value` and `editor.hint`, are strings; `single_line`, `monospace`,
 `password`, `autofocus`, `clear_on_submit`, `is_error`,
 `hide_keyboard_on_submit`, `read_only`, `line_numbers`, `complete`,
 `chromeless`, and `publish_state` are booleans. `document`, `syntax`,
@@ -3794,6 +3794,10 @@ while disconnected, the cleared value appears in the next welcome
 `on_enter` causes the software-input Enter action to dispatch the full editor
 value rather than insert a newline. Unless `single_line` is true, a hardware
 newline or an explicit toolbar snippet MAY still insert a newline.
+
+`editor.hint` is the placeholder shown while the editor's text is empty, as
+`text_input.hint` is for a text field: presentation only, never part of the
+text, and so never seeded, synchronized, published, or captured.
 
 An `editor` without `document` is a local input node and does not participate
 in Section 19. An `editor` with `document` MUST be emitted only when
