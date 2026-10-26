@@ -1212,6 +1212,7 @@
     "mode": "string",
     "display_mode": "string",
     "checked_icon": "identifier",
+    "unchecked_icon": "identifier",
     "caret": "boolean",
     "rich": "boolean",
     "shown": "boolean",

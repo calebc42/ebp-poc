@@ -896,7 +896,8 @@ def check_menu_items(node, path: str):
                 else:
                     check_items(item["items"], f"{at}[{i}].items", nested=True)
                 for member in ("on_tap", "checked", "checked_icon",
-                               "trailing_icon", "trailing_text"):
+                               "unchecked_icon", "trailing_icon",
+                               "trailing_text"):
                     if member in item:
                         problem(f"{at}[{i}].{member}: a submenu row carries no {member}")
                 continue
@@ -905,6 +906,9 @@ def check_menu_items(node, path: str):
             if "trailing_icon" in item and "trailing_text" in item:
                 problem(f"{at}[{i}]: trailing_icon and trailing_text "
                         "are mutually exclusive")
+            if "unchecked_icon" in item and "checked" not in item:
+                # Amendment #204: the unchecked glyph needs a checkable item.
+                problem(f"{at}[{i}].unchecked_icon: requires checked")
 
     has_items = "items" in node
     has_groups = "groups" in node

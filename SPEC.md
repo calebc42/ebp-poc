@@ -3584,7 +3584,7 @@ node. `editor` uses `read_only` for editing permission in addition to
 
 A `MenuItem` MUST contain `label` and either `on_tap` or `items`, and MAY
 contain `icon`, `supporting_text`, `trailing_icon`, `trailing_text`, `checked`,
-`checked_icon`, and `enabled`; `enabled` defaults to `true`. `supporting_text` is a second
+`checked_icon`, `unchecked_icon`, and `enabled`; `enabled` defaults to `true`. `supporting_text` is a second
 line under the label. `trailing_icon` (an identifier) and `trailing_text` (a
 short string such as a keyboard shortcut) occupy the item's single trailing
 slot and are therefore mutually exclusive; a Companion MUST reject an item
@@ -3597,7 +3597,12 @@ presentation state, exactly like `chip.selected`, so Emacs flips it on the
 next snapshot rather than the Companion holding it. While checked,
 `checked_icon` (default `check`) replaces the leading `icon`, and activating
 a checkable item MUST leave the menu open; activating any other item MUST
-close it before dispatching `on_tap`.
+close it before dispatching `on_tap`. `unchecked_icon` (an identifier, valid
+only with `checked`) is the glyph a checkable item shows while unchecked —
+an empty radio button beside its checked twin — so both states are drawn;
+absent, an unchecked item shows its `icon` as before. A presentation that
+draws the state glyph at the item's end instead of its start keeps `icon` in
+place.
 
 A `MenuItem` carrying `items`, a non-empty `MenuItem[]`, is a SUBMENU row: it
 MUST NOT carry `on_tap`, `checked`, `checked_icon`, `trailing_icon`, or
