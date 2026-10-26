@@ -529,7 +529,7 @@ NON_NODE_ENUM_DOMAINS = {
     "dialog.style", "notification.priority", "diagnostic.severity",
     "toolbar.placement", "tab_item.icon_position", "theme.layout_direction",
     "window.size_class", "locale.hour_cycle", "colors.polarity", "visible.op",
-    "snackbar.result", "canvas.op", "swipe.presentation",
+    "snackbar.result", "canvas.op", "swipe.presentation", "uri.scheme",
 }
 
 
@@ -785,6 +785,8 @@ def check_action(obj: dict, path: str, ctx: NodeDocument | None = None,
                     and APP_SURFACE_ID_RE.fullmatch(target)
                     and len(target.encode("utf-8")) <= 128):
                 problem(f"{path}.surface: must be an app Surface ID")
+        if obj["builtin"] == "uri.open" and "uri" in obj:
+            check_uri_open(obj["uri"], f"{path}.uri")
         if obj["builtin"] == "variant.switch":
             host_id = obj.get("id")
             selected = obj.get("value", _NO_VARIANT_VALUE)
@@ -1651,6 +1653,29 @@ def check_locale_object(obj, path: str):
             LOCALE_SCHEMA.get("time_zone_max_bytes", 64) or \
             not re.fullmatch(LOCALE_SCHEMA.get("time_zone_pattern", ""), zone):
         problem(f"{path}.time_zone: not an IANA zone id within locale_schema")
+
+
+URI_OPEN_SCHEMA = contract.get("uri_open_schema", {})
+URI_SCHEME_RE = re.compile(r"^([A-Za-z][A-Za-z0-9+.-]*):(.*)$", re.S)
+
+
+def check_uri_open(uri, path: str):
+    """Amendment #208: an absolute URI in a closed scheme set, no userinfo."""
+    if not isinstance(uri, str):
+        problem(f"{path}: must be a string")
+        return
+    if len(uri.encode("utf-8")) > URI_OPEN_SCHEMA.get("max_bytes", 2048):
+        problem(f"{path}: longer than max_bytes")
+    m = URI_SCHEME_RE.match(uri)
+    schemes = ENUMS.get(URI_OPEN_SCHEMA.get("scheme_enum", ""), [])
+    if not m or m.group(1).lower() not in schemes:
+        problem(f"{path}: scheme is not in enums.uri.scheme")
+        return
+    rest = m.group(2)
+    if rest.startswith("//"):
+        authority = rest[2:].split("/", 1)[0].split("?", 1)[0].split("#", 1)[0]
+        if "@" in authority:
+            problem(f"{path}: user information is forbidden")
 
 
 def check_colors_object(obj, path: str):

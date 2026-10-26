@@ -2571,6 +2571,7 @@ Emacs MUST NOT emit a builtin absent from the applicable target's
 | `surface.open` | `surface` | Select the named present `app:*` surface in the Companion's receiver-local host shell. This MUST NOT change any surface's `current_view` or emit `view.switched`. |
 | `clipboard.copy` | `text` | Copy text through the platform clipboard. The descriptor is necessarily part of its cached document; the Companion MUST NOT create an additional private copy or log the text. Emacs SHOULD NOT author a secret here. |
 | `share.send` | `text`; optional `title` | Open the platform share UI. |
+| `uri.open` | `uri` | Hand the URI to the platform's default viewer for it: a browser, dialer, messaging, mail, or map application. |
 | `companion.settings.open` | none | Open the Companion's own pairing, permissions, offline-state, and diagnostics UI. This is receiver-local host-shell navigation: it MUST NOT change any surface's `current_view` or emit `view.switched`. |
 | `trigger.fire` | `id` | Fire the named `manual` trigger through Section 21's normal pipeline. |
 | `dialog.submit` | optional `value` and `capture_fields` | Complete the containing `dialog.show` request as submitted. `capture_fields` obeys Sections 14.1 and 14.6. |
@@ -2578,7 +2579,7 @@ Emacs MUST NOT emit a builtin absent from the applicable target's
 
 Builtin parameter objects are closed and use these exact types. `view`, `id`,
 and `variant.switch.value` are identifiers; `surface` is an `app:*` Surface ID;
-`text`, `title`, and `dialog.submit`'s string-valued `value` are strings;
+`text`, `title`, `uri`, and `dialog.submit`'s string-valued `value` are strings;
 `capture_fields` is the ID array from Section 14.1; and
 `dialog.submit.value`, when not a string, MAY be any non-secret JSON value that
 fits the frame limits. `view.switch` is valid only inside a multi-view `app:*`
@@ -2614,9 +2615,22 @@ selection, never a visible value absent from the next welcome.
 
 `view.switch` and `companion.settings.open` are REQUIRED in the `app` profile.
 `dialog.submit` and `dialog.dismiss` are REQUIRED in the `dialog` profile.
-`variant.switch`, `surface.open`, `clipboard.copy`, `share.send`, and
-`trigger.fire` are OPTIONAL and MUST be positively advertised in each profile
-where they are usable. A Companion that advertises `variant_host` in the `app`
+`variant.switch`, `surface.open`, `clipboard.copy`, `share.send`, `uri.open`,
+and `trigger.fire` are OPTIONAL and MUST be positively advertised in each profile
+where they are usable.
+
+`uri.open.uri` is an absolute URI of at most 2048 UTF-8 octets whose scheme,
+compared case-insensitively, is one of `http`, `https`, `mailto`, `tel`,
+`voicemail`, `geo`, `sms`, `smsto`, `mms`, or `mmsto` (`enums."uri.scheme"`); a URI carrying user information
+(`user@` before a host) is invalid, and any other scheme — `file`, `content`,
+`intent`, `javascript`, `data`, and the rest — makes the containing document
+invalid. The Companion MUST hand the URI unchanged to the platform's default
+handler for viewing it and MUST NOT fetch, render, or resolve it itself; it
+MUST NOT name a target application. The builtin is valid in every context: a
+tapped link in a note's text is its expected use, so the URI is authored, not
+supplied by the device. A Companion whose platform offers no viewer for an
+advertised scheme MAY fail the occurrence with a local diagnostic; it never
+reports to Emacs. A Companion that advertises `variant_host` in the `app`
 profile MUST also advertise `variant.switch` there. Emacs MUST emit a
 `variant_host` only when both names are advertised; otherwise it MUST retain
 its existing remote `surface.update` behavior for application-authored

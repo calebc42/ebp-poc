@@ -1710,6 +1710,18 @@
       "reveal",
       "popup"
     ],
+    "uri.scheme": [
+      "http",
+      "https",
+      "mailto",
+      "tel",
+      "voicemail",
+      "geo",
+      "sms",
+      "smsto",
+      "mms",
+      "mmsto"
+    ],
     "visible.op": [
       "present",
       "absent",
@@ -1821,6 +1833,13 @@
         "optional": [
           "title"
         ]
+      },
+      "uri.open": {
+        "required": [
+          "builtin",
+          "uri"
+        ],
+        "optional": []
       },
       "companion.settings.open": {
         "required": [
@@ -3269,6 +3288,12 @@
     "hour_cycle_enum": "locale.hour_cycle",
     "time_zone_pattern": "^[A-Za-z0-9_+./-]+$",
     "time_zone_max_bytes": 64
+  },
+  "uri_open_schema": {
+    "builtin": "uri.open",
+    "scheme_enum": "uri.scheme",
+    "max_bytes": 2048,
+    "userinfo": "forbidden"
   },
   "colors_schema": {
     "welcome_member": "colors",
