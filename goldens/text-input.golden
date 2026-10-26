@@ -38,3 +38,8 @@
 37 {"valid":false,"reason":"may be captured only by its own on_submit or dialog.submit","node":{"t":"column","children":[{"t":"text_input","id":"pw","password":true},{"t":"button","label":"Send","on_tap":{"action":"secret.send","capture_fields":["pw"]}}]}}
 38 {"valid":true,"node":{"t":"column","children":[{"t":"text_input","id":"pw","password":true},{"t":"button","label":"Submit","on_tap":{"builtin":"dialog.submit","capture_fields":["pw"]}}]}}
 39 {"valid":true,"node":{"t":"text_input","id":"clear","clear_on_submit":true,"on_submit":{"action":"clear.submit"}}}
+40 {"valid":true,"node":{"t":"text_input","id":"tags","value":"work ta","single_line":true,"suggestions":["tag1","tag2","work","ARCHIVE"]}}
+41 {"valid":false,"reason":"must be 1 to 1000 strings","node":{"t":"text_input","id":"no-suggestions","suggestions":[]}}
+42 {"valid":false,"reason":"without whitespace","node":{"t":"text_input","id":"spaced-suggestion","suggestions":["two words"]}}
+43 {"valid":false,"reason":"incompatible with password","node":{"t":"text_input","id":"secret-suggestions","password":true,"suggestions":["hunter2"]}}
+44 {"valid":false,"reason":"incompatible with mask","node":{"t":"text_input","id":"masked-suggestions","mask":"####","suggestions":["1234"]}}

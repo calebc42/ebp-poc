@@ -394,6 +394,23 @@
       "semantics.error",
       "supporting_text"
     ],
+    "suggestions": {
+      "type": "string-array",
+      "min_items": 1,
+      "max_items": 1000,
+      "item_unit": "unicode-scalar",
+      "item_min_length": 1,
+      "item_max_length": 128,
+      "item_forbids": "whitespace",
+      "word": "non-whitespace-run-ending-at-local-cursor",
+      "match": "simple-case-folded-prefix",
+      "pick": "replace-word-then-one-space",
+      "caret_on_wire": false,
+      "incompatible_with": [
+        "password",
+        "mask"
+      ]
+    },
     "logical_value_excludes": [
       "prefix",
       "suffix",
@@ -744,7 +761,8 @@
         "hide_keyboard_on_submit",
         "content_padding",
         "mask",
-        "filter"
+        "filter",
+        "suggestions"
       ]
     },
     "editor": {
@@ -1225,6 +1243,7 @@
     "hide_keyboard_on_submit": "boolean",
     "mask": "string",
     "filter": "string",
+    "suggestions": "string-array",
     "variant": "string",
     "caret_width": "dp",
     "caret_height": "dp",
@@ -3124,7 +3143,8 @@
     "action.open_surface",
     "data.template",
     "data.insert",
-    "data.visible"
+    "data.visible",
+    "menu.submenu"
   ],
   "candidate_schema": {
     "required": [

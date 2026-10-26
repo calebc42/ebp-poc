@@ -480,6 +480,16 @@ def check_contract():
         "error_description_precedence": [
             "semantics.error", "supporting_text",
         ],
+        "suggestions": {
+            "type": "string-array", "min_items": 1, "max_items": 1000,
+            "item_unit": "unicode-scalar", "item_min_length": 1,
+            "item_max_length": 128, "item_forbids": "whitespace",
+            "word": "non-whitespace-run-ending-at-local-cursor",
+            "match": "simple-case-folded-prefix",
+            "pick": "replace-word-then-one-space",
+            "caret_on_wire": False,
+            "incompatible_with": ["password", "mask"],
+        },
         "logical_value_excludes": ["prefix", "suffix", "mask-literals"],
     }
     if TEXT_INPUT_SCHEMA != expected_text_input_schema:
@@ -867,7 +877,7 @@ def check_menu_items(node, path: str):
     trailing slot to put them in.
     """
 
-    def check_items(items, at: str):
+    def check_items(items, at: str, nested: bool = False):
         if not isinstance(items, list):
             problem(f"{at}: must be an array")
             return
@@ -877,6 +887,19 @@ def check_menu_items(node, path: str):
                 continue
             if not isinstance(item.get("label"), str):
                 problem(f"{at}[{i}].label: MenuItem label must be a string")
+            if "items" in item:
+                # Amendment #203: a submenu row, one level deep.
+                if nested:
+                    problem(f"{at}[{i}].items: submenus nest one level")
+                elif not isinstance(item["items"], list) or not item["items"]:
+                    problem(f"{at}[{i}].items: a submenu needs a non-empty MenuItem array")
+                else:
+                    check_items(item["items"], f"{at}[{i}].items", nested=True)
+                for member in ("on_tap", "checked", "checked_icon",
+                               "trailing_icon", "trailing_text"):
+                    if member in item:
+                        problem(f"{at}[{i}].{member}: a submenu row carries no {member}")
+                continue
             if not isinstance(item.get("on_tap"), dict):
                 problem(f"{at}[{i}].on_tap: MenuItem needs an ActionDescriptor")
             if "trailing_icon" in item and "trailing_text" in item:
@@ -1115,6 +1138,23 @@ def check_text_input(node, path: str):
             problem(f"{path}.mask: mask is incompatible with password")
         if "syntax" in node:
             problem(f"{path}.mask: mask is incompatible with syntax")
+
+    if "suggestions" in node:
+        # Amendment #202: whole words to complete, never the caret.
+        suggestions = node["suggestions"]
+        if not isinstance(suggestions, list) or \
+                not 1 <= len(suggestions) <= 1000:
+            problem(f"{path}.suggestions: must be 1 to 1000 strings")
+        else:
+            for i, word in enumerate(suggestions):
+                if not isinstance(word, str) or not 1 <= len(word) <= 128 \
+                        or any(scalar.isspace() for scalar in word):
+                    problem(f"{path}.suggestions[{i}]: must be 1 to 128 "
+                            "scalars without whitespace")
+        if node.get("password") is True:
+            problem(f"{path}.suggestions: incompatible with password")
+        if "mask" in node:
+            problem(f"{path}.suggestions: incompatible with mask")
 
 
 VARIANT_FORBIDDEN_STATEFUL = {
@@ -1861,6 +1901,8 @@ def value_matches_tag(tag, value, node, member) -> bool:
     if tag == "two-number-array":
         return isinstance(value, list) and len(value) == 2 and \
             all(_is_number(v) for v in value)
+    if tag == "string-array":
+        return isinstance(value, list) and all(isinstance(v, str) for v in value)
     if tag == "number-array":
         return isinstance(value, list) and all(_is_number(v) for v in value)
     if tag.endswith("-object"):

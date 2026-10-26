@@ -3573,7 +3573,7 @@ node. `editor` uses `read_only` for editing permission in addition to
 | `icon_button` | `icon: identifier`, `on_tap: ActionDescriptor` | `content_description`, `badge`, `enabled` |
 | `chip` | `label: string` | `on_tap`, `selected`, `icon`, `enabled` |
 | `menu` | none | `items`, `groups`, `footer`, `icon`, `enabled`, `initial_scroll`. Exactly one of `items: MenuItem[]` and `groups: MenuGroup[]`. `icon` is the overflow anchor's glyph; `footer` is one Node drawn inside the popup below the rows; `initial_scroll`: `start` (default) or `end`. |
-| `text_input` | `id: identifier` | `value`, `hint`, `label`, `on_change`, `on_submit`, `single_line`, `min_lines`, `max_lines`, `monospace`, `syntax`, `password`, `keyboard`, `autofocus`, `clear_on_submit`, `variant`, `is_error`, `supporting_text`, `prefix`, `suffix`, `leading_icon`, `trailing_icon`, `max_length`, `selection`, `hide_keyboard_on_submit`, `content_padding`, `mask`, `filter`, `enabled` |
+| `text_input` | `id: identifier` | `value`, `hint`, `label`, `on_change`, `on_submit`, `single_line`, `min_lines`, `max_lines`, `monospace`, `syntax`, `password`, `keyboard`, `autofocus`, `clear_on_submit`, `variant`, `is_error`, `supporting_text`, `prefix`, `suffix`, `leading_icon`, `trailing_icon`, `max_length`, `selection`, `hide_keyboard_on_submit`, `content_padding`, `mask`, `filter`, `suggestions`, `enabled` |
 | `editor` | `id: identifier` | `document`, `value`, `on_save`, `on_enter`, `single_line`, `min_lines`, `max_lines`, `read_only`, `syntax`, `line_numbers`, `complete`, `chromeless`, `publish_state`, `autofocus`, `toolbar`, `enabled` |
 | `checkbox` | `id: identifier` | `checked`, `label`, `on_change`, `enabled` |
 | `switch` | `id: identifier` | `checked`, `label`, `on_change`, `enabled` |
@@ -3582,9 +3582,9 @@ node. `editor` uses `read_only` for editing permission in addition to
 | `time_button` | `label: string`, `on_pick: ActionDescriptor` | `value`, `enabled` |
 | `slider` | `id: identifier`, `on_change: ActionDescriptor` | `value`, `min`, `max`, `values`, `enabled` |
 
-A `MenuItem` MUST contain `label` and `on_tap` and MAY contain `icon`,
-`supporting_text`, `trailing_icon`, `trailing_text`, `checked`, `checked_icon`,
-and `enabled`; `enabled` defaults to `true`. `supporting_text` is a second
+A `MenuItem` MUST contain `label` and either `on_tap` or `items`, and MAY
+contain `icon`, `supporting_text`, `trailing_icon`, `trailing_text`, `checked`,
+`checked_icon`, and `enabled`; `enabled` defaults to `true`. `supporting_text` is a second
 line under the label. `trailing_icon` (an identifier) and `trailing_text` (a
 short string such as a keyboard shortcut) occupy the item's single trailing
 slot and are therefore mutually exclusive; a Companion MUST reject an item
@@ -3598,6 +3598,17 @@ next snapshot rather than the Companion holding it. While checked,
 `checked_icon` (default `check`) replaces the leading `icon`, and activating
 a checkable item MUST leave the menu open; activating any other item MUST
 close it before dispatching `on_tap`.
+
+A `MenuItem` carrying `items`, a non-empty `MenuItem[]`, is a SUBMENU row: it
+MUST NOT carry `on_tap`, `checked`, `checked_icon`, `trailing_icon`, or
+`trailing_text`, because activating it opens its items and the Companion draws
+the submenu indicator in its trailing slot. Submenus nest one level: an item
+inside `items` MUST NOT itself carry `items`. A Companion presents a submenu
+as its platform presents one — beside the parent popup, or in its place under
+a header naming the parent — and its items follow the rules above; the
+platform's dismissal of the submenu (Back, a tap outside) never dispatches.
+A Companion that presents submenus advertises the `menu.submenu` feature
+(Section 22.4); without it Emacs sends no `items`.
 
 A `MenuGroup` is `{label?, items}`: `items` is a non-empty `MenuItem[]`, and a
 non-empty `label` heads the group above a separator. A menu MUST present one
@@ -3700,6 +3711,22 @@ filter falls back to no filter under Section 12 rule 6. An authored value MUST
 already satisfy a recognized filter. Emacs MUST nevertheless validate any
 domain restriction it relies on when the value arrives; the local filter is an
 editing affordance, not application authorization.
+
+`suggestions` is an array of 1 to 1000 strings, each 1 to 128 Unicode scalar
+values containing no whitespace, that the Companion offers to complete the
+word being typed: the maximal run of non-whitespace scalars that ends at the
+Companion's local cursor. While that word is non-empty, the Companion SHOULD
+show, beside the field and without taking focus from it, the suggestions
+that begin with the word under simple case folding, in authored order; with
+no match or an empty word it shows none. Choosing one replaces the word with
+the suggestion followed by one U+0020 and places the cursor after it; that is
+an ordinary local edit, subject to `single_line`, `filter` and `max_length`,
+and published as any other edit is. The cursor never travels: `suggestions`
+adds no `caret` member and leaves Section 14.6.1 unchanged. A suggestion is
+an editing affordance, not a domain restriction; Emacs MUST validate the
+value it receives as it would a typed one. `suggestions` is invalid with
+`password: true` or with `mask`. A Companion that does not offer completion
+ignores the member and the field remains an ordinary text input.
 
 `max_length` bounds the logical value in Unicode scalar values. An authored
 value longer than the bound is invalid content. Before committing a local
@@ -5546,6 +5573,7 @@ absent.
 | `data.template` | a node carrying `template` and `bind.children` (Section 13.8.5) | expand the template in Emacs and send literal `children` |
 | `data.insert` | a Section 13.8.4 DataOp whose `op` is `insert` | send a `set` of the containing array instead |
 | `data.visible` | a node carrying `visible_when` (Section 13.8.6) | evaluate the predicates in Emacs and omit every node whose conjunction fails |
+| `menu.submenu` | a `MenuItem` carrying `items` (Section 17.4) | give the row an `on_tap` in place of `items`, or omit the row |
 
 A feature name is a Section 4.4 identifier. A receiver MUST ignore an
 unrecognized `features` entry. A new constraining or member-gating feature
