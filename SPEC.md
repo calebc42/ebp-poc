@@ -89,6 +89,8 @@ canonical serialization.
 | **event** | One occurrence of a semantic action or subscribed platform trigger. |
 | **revision** | A non-negative safe integer that orders snapshots and tombstones for one surface. |
 | **capability** | A positively advertised optional protocol or platform feature. |
+| **bundled deployment** | One application package that contains both endpoints. Each remains its own endpoint with its own Section 3 durability domain; the application, not the user, installs, starts, and keeps the Emacs endpoint's process. |
+| **engine supervisor** | A component of a bundled deployment that is neither endpoint: it provisions the Emacs endpoint's initialization and credential files in application-private storage and starts, stops, restarts, and keeps alive the Emacs process on the application's own policy (Section 5.8). |
 | **Golden** | A version-controlled binary fixture containing one or more complete wire messages and an identified expected outcome. |
 
 Generic words such as “client” and “server” MUST NOT be used to identify the
@@ -531,9 +533,11 @@ single-authority, supersession, and redial rules of Section 5.7. A profile
 identifier is a Section 4.4 identifier.
 
 An implementation MUST NOT advertise a profile this document does not define,
-and MUST show in its pairing UI which profiles it offers. A future profile
-MUST completely define every property above before an implementation
-advertises it. Nothing on the wire names the profile: the connection itself
+and MUST show in its pairing UI which profiles it offers. A bundled deployment
+(Section 2.3), whose pairing is provisioned rather than shown (Section 9.1),
+MUST show the offered profile and its address in a diagnostics view instead.
+A future profile MUST completely define every property above before an
+implementation advertises it. Nothing on the wire names the profile: the connection itself
 determines it, and an endpoint MUST NOT accept a connection under one profile
 and then apply another profile's rules to it.
 
@@ -898,10 +902,40 @@ host alive beyond that window: liveness is not the Companion's to buy
 > position; the attempt then fails, which is not event rejection, and the
 > component-start mechanism above remains available to the same Companion.
 
+**Bundled deployments, by the engine supervisor.** In a bundled deployment
+(Section 2.3) the engine supervisor MAY start, stop, restart, and keep alive
+the Emacs process on the application's own policy — when the application
+becomes visible, as a persistent service the user can disable, after an
+update or a reboot. Such a start is not a wake: it is not conditioned on an
+admitted event, it carries no event, and it does not count against the
+coalescing, 60-second, and 10-second bounds above, which continue to govern
+the wake signal alone. It changes no correctness requirement of this
+document: the Companion endpoint still binds its listener and the Emacs
+endpoint still dials and authenticates under Section 9 exactly as a
+separately installed Emacs would, and invariant 8 holds unchanged — the
+supervisor's keeping of the process buys latency and freshness, never an
+outcome.
+
+The supervisor MUST NOT pass the Emacs process startup arguments, a command
+line, code to evaluate, or a file to load through the start or through any
+wake signal. It provisions the Emacs endpoint's initialization files in
+application-private storage at install and update time, as a user's own
+init would be, and the signal that starts the process carries nothing, under
+the inertness rule above. Where a bundled deployment uses the bound-service
+wake, its target is fixed by the application, non-exported, and extra-less,
+which satisfies the "user has configured" and re-check requirements by
+construction; the Companion MAY therefore grant `offline.wake` without
+further configuration, and MUST still release the wake binding on the terms
+above. A supervisor's keep-alive, where the application offers one, is its
+own started service and never the wake binding.
+
 **Every other platform and profile.** No wake mechanism is defined and
 `offline.wake` MUST NOT be granted. A desktop Companion MUST NOT launch or
 signal an Emacs process: no inert target satisfying the no-parameter rule
-above is defined for desktop hosts. A browser Companion cannot launch
+above is defined for desktop hosts. In a bundled desktop deployment the
+engine supervisor, not the Companion endpoint, MAY start and keep its own
+child Emacs under the paragraph above; that defines no wake mechanism, and
+`offline.wake` MUST NOT be granted on desktop. A browser Companion cannot launch
 anything. A Companion that does not share a host with Emacs has no host to
 signal. Emacs's automatic redial under Section 5.7 is the reconnection
 mechanism on these platforms, and a `wake` descriptor cannot be authored
@@ -1266,6 +1300,22 @@ persist the pairing and MUST require re-pairing each session.
 > through a system document-provider or shared outright under a common platform
 > user identity; keep the token outside any exported subtree, or treat the
 > floor as unmet.
+
+In a bundled deployment (Section 2.3) the Companion generates the two values
+as above, and the engine supervisor delivers the Emacs endpoint's copy through
+application-private storage instead of through the user, so the token need
+not be displayed. Each endpoint still holds its own copy under the rules of
+this section, in its own Section 3 durability domain: the Companion's under
+keystore-backed storage where the platform provides it, the Emacs endpoint's
+as an application-private file with the most restrictive access mode the
+platform offers, outside any subtree the application exports; because both
+endpoints share one application identity, "storage private to each endpoint"
+here means a location only that endpoint's process reads. The reduced
+protection MUST still be made explicit to the user once, in the
+application's first-run or diagnostics view, and a debuggable build of the
+application MUST be treated as reducing it further. Revocation in a bundled
+deployment MUST erase both copies; re-pairing is the supervisor provisioning
+a new pairing.
 
 The pairing ID is not secret and selects the correct token and persistent state
 partition without trial-HMAC against unrelated tokens.
